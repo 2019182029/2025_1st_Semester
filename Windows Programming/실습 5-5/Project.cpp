@@ -1,6 +1,14 @@
 #include <windows.h>
 #include <tchar.h>
-#include "resource.h"
+#include <iostream>
+#include <vector>
+#include <gdiplus.h>
+
+#pragma comment (lib, "msimg32.lib")
+#pragma comment(lib, "gdiplus.lib")
+//#pragma comment(linker,"/entry:WinMainCRTStartup /subsystem:console")
+
+using namespace Gdiplus;
 
 HINSTANCE g_hInst;
 LPCTSTR lpszClass = L"Window Class Name";
@@ -9,34 +17,54 @@ LPCTSTR lpszWindowName = L"Windows Programming";
 LRESULT CALLBACK WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam);
 
 //////////////////////////////////////////////////
-// BOARD
-constexpr int WIDTH = 1000;
-constexpr int HEIGHT = 1000;
-constexpr int ROW = 40;
-constexpr int COL = 40;
-constexpr int OFFSET = 24;
+// Background
+constexpr int WIDTH = 1024;
+constexpr int HEIGHT = 800;
 
-class BOARD {
-private:
+RECT rect;
 
+class BACKGROUND {
 public:
-	BOARD() {}
-	~BOARD() {}
+	BITMAP m_bmp;
+	HBITMAP m_hBitmap;
 
-	void print(HDC hDC);
+	void print(HDC mDC) const {
+		HDC bDC = CreateCompatibleDC(mDC);
+		HGDIOBJ hBitmap = SelectObject(bDC, m_hBitmap);
+
+		StretchBlt(mDC, 0, 0, rect.right, rect.bottom,
+			bDC, 0, 0, m_bmp.bmWidth, m_bmp.bmHeight, SRCCOPY);
+
+		SelectObject(bDC, hBitmap);
+		DeleteDC(bDC);
+	}
 };
 
-void BOARD::print(HDC hDC) {
-	for (int r = 0; r < ROW; ++r) {
-		for (int c = 0; c < COL; ++c) {
-			Rectangle(hDC, 
-				r * OFFSET, c * OFFSET,
-				(r + 1) * OFFSET, (c + 1) * OFFSET);
-		}
-	}
-}
+BACKGROUND bg;
 
-BOARD board;
+//////////////////////////////////////////////////
+// CHARACTER
+HBITMAP RunBit[2];
+
+class CHARACTER {
+public:
+	int m_x, m_y;
+	int m_count;
+	int m_velocity;
+
+	void print(HDC mDC) {
+		HDC cDC = CreateCompatibleDC(mDC);
+
+		SelectObject(cDC, RunBit[m_count]);
+		m_count = (m_count + 1) % 2;
+
+		TransparentBlt(mDC, m_x, m_y, 90, 90, cDC, 0, 0, 90, 90, RGB(0, 0, 64));
+
+		DeleteDC(cDC);
+	}
+};
+
+CHARACTER character;
 
 //////////////////////////////////////////////////
 // WINMAIN
@@ -78,14 +106,27 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE	hPrevInstance, _
 LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 	PAINTSTRUCT ps;
 	HDC hDC, mDC;
-	HBITMAP hBitmap;
-	RECT rt;
 
 	switch (iMessage) {
 	case WM_CREATE:
+		bg.m_hBitmap = (HBITMAP)LoadImage(g_hInst, TEXT("Resource\\kpu.bmp"), IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
+		GetObject(bg.m_hBitmap, sizeof(BITMAP), &bg.m_bmp);
+		GetClientRect(hWnd, &rect);
+		
+		TCHAR file[100];
+		for (int i = 1; i < 5 + 1; ++i) {
+			swprintf(file, 50, TEXT("Resource\\ch%d.bmp"), i);
+			RunBit[i - 1] = (HBITMAP)LoadImage(g_hInst, file, IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
+		}
+
+		SetTimer(hWnd, 0, 100, NULL);
 		break;
 
 	case WM_TIMER:
+		switch (wParam) {
+		case 0:
+			break;
+		}
 		InvalidateRect(hWnd, NULL, FALSE);
 		break;
 
@@ -105,36 +146,49 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 		break;
 
 	case WM_LBUTTONDOWN: {
-		int x = (LOWORD(lParam) / OFFSET);
-		int y = (HIWORD(lParam) / OFFSET);
+		InvalidateRect(hWnd, NULL, FALSE);
+		break;
+	}
 
+	case WM_LBUTTONUP: {
+		InvalidateRect(hWnd, NULL, FALSE);
+		break;
+	}
+
+	case WM_MOUSEMOVE: {
 		InvalidateRect(hWnd, NULL, FALSE);
 		break;
 	}
 
 	case WM_RBUTTONDOWN: {
-		int x = (LOWORD(lParam) / OFFSET);
-		int y = (HIWORD(lParam) / OFFSET);
-
 		InvalidateRect(hWnd, NULL, FALSE);
 		break;
 	}
 
-	case WM_PAINT:
-		GetClientRect(hWnd, &rt);
+	case WM_RBUTTONUP: {
+		InvalidateRect(hWnd, NULL, FALSE);
+		break;
+	}
+
+	case WM_PAINT: {
 		hDC = BeginPaint(hWnd, &ps);
 		mDC = CreateCompatibleDC(hDC);
-		hBitmap = CreateCompatibleBitmap(hDC, rt.right, rt.bottom);
-		SelectObject(mDC, (HBITMAP)hBitmap);
 
-		board.print(mDC);
+		HBITMAP hBitmap = CreateCompatibleBitmap(hDC, rect.right, rect.bottom);
+		HGDIOBJ old_hBitmap = SelectObject(mDC, hBitmap);
 
-		BitBlt(hDC, 0, 0, rt.right, rt.bottom, mDC, 0, 0, SRCCOPY);
-		DeleteDC(mDC);
+		bg.print(mDC);
+
+		character.print(mDC);
+
+		BitBlt(hDC, 0, 0, rect.right, rect.bottom, mDC, 0, 0, SRCCOPY);
+
+		SelectObject(mDC, old_hBitmap);
 		DeleteObject(hBitmap);
+		DeleteDC(mDC);
 		EndPaint(hWnd, &ps);
 		break;
-
+	}
 
 	case WM_DESTROY:
 		PostQuitMessage(0);
