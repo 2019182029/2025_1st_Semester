@@ -16,12 +16,15 @@
 
 #define IDC_LISTBOX1 20
 
+#define IDC_EDIT1 30
+
 HWND g_hWnd, g_hChild;
 HINSTANCE g_hInst;
 LPCTSTR lpszClass = L"Window Class Name";
 LPCTSTR lpszWindowName = L"Windows Programming";
 
 HWND hList;
+HWND hEdit;
 HWND hButton[6];
 TCHAR items[10][2] = { L"0", L"1", L"2", L"3", L"4", L"5", L"6", L"7", L"8", L"9" };
 
@@ -45,6 +48,7 @@ public:
 	BITMAP m_bmp;
 	HBITMAP m_hBitmap;
 	bool m_filled = false;
+	int m_img_index = 0;
 
 	void print(HDC mDC, const RECT& rect) const {
 		HDC bDC = CreateCompatibleDC(mDC);
@@ -136,6 +140,8 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 		hList = CreateWindow(L"listbox", NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_STANDARD, 600, 10, 100, 200, hWnd, (HMENU)IDC_LISTBOX1, g_hInst, NULL);
 		for (int i = 0; i < 10; ++i)
 			SendMessage(hList, LB_ADDSTRING, 0, (LPARAM)items[i]);
+
+		hEdit = CreateWindow(L"edit", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL, 10, 535, 500, 200, hWnd, (HMENU) IDC_EDIT1, g_hInst, NULL);
 		break;
 
 	case WM_TIMER:
@@ -196,6 +202,7 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 				backgrounds[current_page].m_hBitmap = (HBITMAP)LoadImage(g_hInst, str, IMAGE_BITMAP, 0, 0, LR_LOADFROMFILE | LR_CREATEDIBSECTION);
 				GetObject(backgrounds[current_page].m_hBitmap, sizeof(BITMAP), &backgrounds[current_page].m_bmp);
 				backgrounds[current_page].m_filled = true;
+				backgrounds[current_page].m_img_index = i;
 				break;
 			}
 			}
@@ -213,6 +220,18 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 		break;
 
 	case WM_PAINT: {
+		int index = 0;
+		TCHAR str[10][100];
+		TCHAR final[1024] = L"";
+		for (int i = 0; i < 10; ++i) {
+			if (backgrounds[i].m_filled) {
+				wsprintf(str[index], L"Page %d : %d.bmp", i, backgrounds[i].m_img_index);
+				lstrcat(final, str[index]);
+				lstrcat(final, L"\r\n");
+				++index;
+			}
+		}
+		SetDlgItemText(hWnd, IDC_EDIT1, final);
 		InvalidateRect(g_hChild, NULL, FALSE);
 		break;
 	}
