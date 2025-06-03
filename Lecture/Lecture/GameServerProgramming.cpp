@@ -240,8 +240,6 @@
                      lua_pushnumber(L, my_id);
                      lua_pcall(L, 1, 0, 0);
 
-                     lua_pop(L, 1);
-
                      lua_register(L, "API_send_message", API_send_message);
                      lua_register(L, "API_get_x", API_get_x);
                      lua_register(L, "API_get_y", API_get_y);
