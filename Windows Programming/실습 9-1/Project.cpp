@@ -74,8 +74,8 @@ public:
 		StretchBlt(mDC, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
 			bDC, 0, 0, m_bmp.bmWidth, m_bmp.bmHeight, SRCCOPY);
 
-		int x_offset = (rect.right - rect.left) / 15;
-		int y_offset = (rect.bottom - rect.top) / 15;
+		int x_offset = 450 / 15;
+		int y_offset = 450 / 15;
 
 		for (int r = 0; r < ROW; ++r) {
 			for (int c = 0; c < COL; ++c) {
@@ -83,6 +83,7 @@ public:
 
 				if (index != -1) {
 					SelectObject(bDC, hBitmap[index]);
+
 					StretchBlt(mDC, rect.left + c * x_offset, rect.top + r * y_offset, x_offset, y_offset,
 						bDC, 0, 0, 100, 100, SRCCOPY);
 				}
@@ -94,8 +95,8 @@ public:
 				MoveToEx(mDC, rect.left, i * y_offset, NULL);
 				LineTo(mDC, rect.right, i * y_offset);
 
-				MoveToEx(mDC, i * y_offset, rect.top, NULL);
-				LineTo(mDC, i * y_offset, rect.bottom);
+				MoveToEx(mDC, i * x_offset, rect.top, NULL);
+				LineTo(mDC, i * x_offset, rect.bottom);
 			}
 		}
 
@@ -135,7 +136,7 @@ public:
 		case RIGHT:
 			m_x += 5;
 			camera_x += 5;
-			if (camera_x > (bgs.size() - 1) * 500) camera_x = (bgs.size() - 1) * 500;
+			if (camera_x > (bgs.size() - 1) * 450) camera_x = (bgs.size() - 1) * 450 - (bgs.size());
 			break;
 		}
 
@@ -219,7 +220,7 @@ LRESULT WndProc(HWND hWnd, UINT iMessage, WPARAM wParam, LPARAM lParam) {
 
 	switch (iMessage) {
 	case WM_CREATE:
-		g_hChild = CreateWindow(L"ChildClass", NULL, WS_CHILD | WS_VISIBLE | WS_BORDER , 10, 10, 500, 500, hWnd, NULL, g_hInst, NULL);
+		g_hChild = CreateWindow(L"ChildClass", NULL, WS_CHILD | WS_VISIBLE | WS_BORDER , 10, 10, 450, 450, hWnd, NULL, g_hInst, NULL);
 		
 		hButton[0] = CreateWindow(L"button", L"PLATFORM1", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | BS_BITMAP, 600, 210, 100, 25, hWnd, (HMENU)IDC_BUTTON_PLATFORM1, g_hInst, NULL);
 		hButton[1] = CreateWindow(L"button", L"PLATFORM2", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | BS_BITMAP, 600, 245, 100, 25, hWnd, (HMENU)IDC_BUTTON_PLATFORM2, g_hInst, NULL);
@@ -467,21 +468,23 @@ void player_platform_collision() {
 
 	if (0 > player.m_g) return;
 
-	int x_offset = 500 / 15;
-	int y_offset = 500 / 15;
+	int x_offset = 450 / 15;
+	int y_offset = 450 / 15;
 
 	for (int i = 0; i < bgs.size(); ++i) {
 		for (int r = 0; r < 15; ++r) {
 			for (int c = 0; c < 15; ++c) {
-				if (bgs[i].m_platform[r][c] == -1) continue;
+				if (bgs[i].m_platform[r][c] == -1) {
+					continue;
+				}
 
-				int x = i * 500 + c * y_offset - camera_x;
-				int y = r * x_offset;
+				int x = (c * y_offset) + (i * 450);
+				int y = (r * x_offset);
 
-				if (player.m_x <= x + x_offset &&
-					x <= player.m_x + x_offset &&
-					player.m_y <= y + y_offset &&
-					y <= player.m_y + y_offset) {
+				if ((player.m_x <= x + x_offset) &&
+					(x <= player.m_x + x_offset) &&
+					(player.m_y <= y + y_offset) &&
+					(y <= player.m_y + y_offset)) {
 					player.m_y = y - y_offset;
 					player.m_g = 0;
 					return;
