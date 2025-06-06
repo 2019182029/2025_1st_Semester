@@ -70,6 +70,9 @@
                    → Mutex가 필요 없어진다.
                       Non-Blocking Concurrent Queue가 필요하다.
 
+                   NPC는 시야 리스트를 갖지 않고, 필요할 때마다 Sector 검색 후 Near List 생성
+                   → NPC 이동 시 발생하는 NPC의 시야 리스트 업데이트 오버헤드 제거
+
        → 이동 시 시야 처리 순서 : Sector 검색 후 Near List 생성
                                    → Near List의 모든 객체에 대해 : 시야 리스트에 없으면
                                                                      → 시야 리스트에 추가
@@ -196,55 +199,135 @@
 
  ■ NPC
 
-  2. NPC-AI
-                             NPC 서버를 둘 경우 NPC 서버의 연산 결과를 메인 서버로 전송해야 하므로 통신 오버헤드 ↑
-    → my_hp += HEAL_AMOUNT;
-       → my_hp = MIN(my_hp, my_max_hp);를 추가하는 것이 낫다.
-          → 그렇지만 서순이 이상 → 실제 예로 바꿔야 하는데, busy waiting
+ 1. NPC
+    → 인공지능 
+       → 복잡한 인공지능은 Script로 구현 : 게임 제작 파이프라인 단축
+                                            → 서버 프로그래머의 개입 없이 기획자가 작성  // 서버 프로그래머는 Script 연동 시스템을 구현하고 샘플 Script를 작성할 필요 有
+                                               서버 리부팅 필요 無
 
-    → 해결책 2 : 필요한 NPC의 heart_beat()만을 호출
-                  → 해결책 1과의 차이점 : heart_beat() 함수에서 다음 heart_beat이 필요한지 판단
-                                           → 필요 시 자신을 등록
-                                           → 등록된 객체들에 대해서만 heart_beat() 호출
-                                              → 문제점 : heart_beat() 함수 내부의 수많은 조건문
-                                                          → heart_beat() 함수를 없애서 각 모듈에서 timer를 직접 사용
-                                                          → timerthread는 가장 오래된 것부터 처리
-                                                             → 또한, Priority_queue를 사용하여 우선순위가 높은 것부터 처리
-                                                                → AI는 process_event 함수를 사용
+       → 능동적 인공지능 : 플레이어의 이벤트를 근처 NPC에게 Broadcast
+                            → 플레이어가 움직이지 않을 시 인식하지 못하는 경우가 발생할 수 있으므로, 플레이어 또는 NPC 생성 시에도 Broadcast
 
-    → PostQueuedCompletionStatus의 num_bytes, key, LPWSAOVERLAPPED는 iocp 객체에 등록하지 않아도 그대로 넘어간다.
-       → 즉, 실제 IO와는 관련이 없고 worker_thread를 깨울 때 사용하는 것
-       → concurrent_priority_queue 쓰면 된다.
+    → NPC 서버
+       → 장점 : 안정성  // NPC 서버가 종료되어도 메인 서버는 정상 작동
+                 부하 분산
 
-    → 같은 컨테이너
-       → 장점 :
-          단점 : NPC마다 사용하지 않는 SESSION 정보 추가
-
-       다른 컨테이너
-       → 장점 :
-          단점 : ID를 별도로 관리하는 오버헤드 발생
-                 → can_see 함수를 예로 들면, user - user, user - npc, user - skill 등의 여러 함수를 정의할 필요 有
-
-       → 꼴리는 거 써라
+          단점 : 메인 서버와의 통신 오버헤드
+                 → 공유 메모리 참조가 패킷 통신으로 악화
+                    서버 입장에서는 NPC와 플레이어가 동일한 부하
 
 
- 4. NPC인지 PC인지 구분하기 위해 멤버 변수 추가?
-    → 컨테이너 검색 오버헤드 발생
-       → PC와 NPC의 ID 구간을 따로 설정함으로써 해결
-          → array라면 ID 구간을 신중히 결정해야 한다.  // by) 메모리 낭비
-          → unordered_map이라면 ID 구간이 자유롭다!
+ 2. 어떠한 컨테이너에 담아야 하는가?
+    → 같은 컨테이너 : 상속 사용
+                       NPC가 SESSION 정보를 갖는 낭비 발생
+                       → PC와 NPC를 구분하는 변수 추가?
+                          → 컨테이너 검색 오버헤드 발생
+                             PC와 NPC의 ID 구간을 따로 설정함으로써 해결
 
-    → npc는 vl를 두지 않고, 이동할 때마다 새로 생성
-       → 유지한다면 pc 이동 시에도 update 필요...
+       다른 컨테이너 : ID를 별도로 관리하는 오버헤드 발생
 
-    → pc 이동 시 npc에게는 당연히! 패킷 전송 X
 
-    → 타이머 큐를 concurrent_queue로 하면 락할 필요 X,
-       → pop() 대신 try_pop()이 존재 : 인자로 넘겨준 애한테 pop한 애를 복사한다.
-          TIMER_EVENT ev;
-          true = timer_queue.try_pop(ev);
+ 3. 구현
+    → while (true) {
+           if (A_done == false) {
+               DO(A);
+               A_done = true;
+           }
+       }
+       → 문제점 : 매 루프마다 여러 개의 if문 검사 
+                   Busy Waiting
+                   → 캐시 문제, Pipeline Stall
 
-       → OP_NPC_MOVE에서 awake할 필요가 없으면 다시 sleep하는 코드 추가!
+          해결책 : heart_beat 함수를 두고 일정 시간 간격마다 호출하여 Busy Waiting이 없도록 한다.
+
+    → Cobj::heart_beat() {
+           if (m_hp < m_max_hp) {
+               m_hp += HEAL_AMOUNT;
+           }
+       }
+
+       while (true) {
+           auto current_time = current_time();
+
+           for (int i = 0; i < MAX_NPC; ++i) {
+               NPC[i].heart_beat();
+           }
+
+           Sleep(delay);
+       }
+       → 문제점 : 계속해서 호출되는 heart_beat()가 아무것도 수행하지 않는다.
+
+          해결책 : 필요한 경우만 heart_beat()가 호출되도록 한다.
+                   → 복잡한 인공지능의 경우 프로그래밍이 어려워진다.
+                      불리지 않는 경우를 판단하는 것 자체가 오버헤드
+
+                   각 모듈에서 timer를 직접 사용한다.
+
+    → struct event_type {
+           int obj_id;
+           int target_id;
+           int event_id;
+           high_resolution_clock::time_point wakeup_time;
+
+           constexpr bool operator<(const event_type& _Left) const {
+               return (wakeup_time > _Left.wakeup_time);
+           }
+       };
+    
+       priority_queue<event_type> timer_queue;
+       mutex timer_lock;
+
+       get_damage(int damage) {
+           m_hp -= damage;
+           add_timer(m_heal_event, 1000);
+       }
+
+       m_heal_event() {
+           m_hp += HEAL_AMOUNT;
+
+           if (m_hp < m_max_hp) {
+               add_timer(m_heal_event, 1000);
+           }
+       }
+
+       do_timer() {
+           do {
+               do {
+                   timer_lock.lock();
+                   event_type k = top(timer_queue);
+                   timer_lock.unlock();
+
+                   if (k.start_time > current_time()) {
+                        break;
+                   }
+
+                   timer_lock.lock();
+                   pop(timer_queue);
+                   timer_lock.unlock();
+
+                   EXP_OVER eo = new EXP_OVER(MOVE);
+                   PostQueuedCompletionStatue(h_iocp, 0, id, eo);  // timer thread의 과부하를 방지하기 위해 실제 작업은 worker thread에서 수행해야 한다.
+               } 
+               while (true);
+               Sleep(1);
+           }
+           while (true);
+       }
+       → 문제점 : 플레이어의 시야 리스트에 있는 NPC만 행동해야 한다.
+          
+          해결책 : 플레이어가 근처에 있으면 Cobj::wake_up() 호출
+                   플레이어가 근처에 없으면 Cobj::sleep() 호출
+                   → m_is_active 변수를 통해 중복 Cobj::wake_up() 호출 방지  // Mutex 대신 CAS를 사용하는 것이 부하 ↓
+
+    → Cobj::wake_up() {
+           if (!m_is_active) {
+               bool expected = false;
+
+               if (std::atomic_compare_exchange_strong(&m_is_active, &expected, true)) {
+                   add_timer(m_event, 1000);
+               }
+           }
+       }
 
  ====================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================
 
