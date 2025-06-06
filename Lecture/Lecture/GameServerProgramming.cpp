@@ -267,7 +267,7 @@
            high_resolution_clock::time_point wakeup_time;
 
            constexpr bool operator<(const event_type& _Left) const {
-               return (wakeup_time < _Left.wakeup_time);
+               return (wakeup_time > _Left.wakeup_time);
            }
        };
     

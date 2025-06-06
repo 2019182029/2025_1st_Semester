@@ -129,6 +129,7 @@
   <ItemGroup>
     <ClCompile Include="GameServerProgramming.cpp" />
     <ClCompile Include="MultithreadProgramming.cpp" />
+    <ClCompile Include="생활한자.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
