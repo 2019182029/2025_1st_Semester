@@ -205,7 +205,7 @@
                                             → 서버 프로그래머의 개입 없이 기획자가 작성  // 서버 프로그래머는 Script 연동 시스템을 구현하고 샘플 Script를 작성할 필요 有
                                                서버 리부팅 필요 無
 
-       → 능동적 인공지능 : 플레이어의 이벤트를 근처 NPC에게 Broadcast
+       → 능동적 인공지능 : 플레이어의 이동을 근처 NPC에게 Broadcast
                             → 플레이어가 움직이지 않을 시 인식하지 못하는 경우가 발생할 수 있으므로, 플레이어 또는 NPC 생성 시에도 Broadcast
 
     → NPC 서버
@@ -218,11 +218,10 @@
 
 
  2. 어떠한 컨테이너에 담아야 하는가?
-    → 같은 컨테이너 : 상속 사용
-                       NPC가 SESSION 정보를 갖는 낭비 발생
-                       → PC와 NPC를 구분하는 변수 추가?
-                          → 컨테이너 검색 오버헤드 발생
-                             PC와 NPC의 ID 구간을 따로 설정함으로써 해결
+    → 같은 컨테이너 : NPC가 SESSION 정보를 갖는 낭비 발생
+                       → PC와 NPC를 구분하는 방법 : PC와 NPC를 구분하는 변수 추가
+                                                     → 컨테이너 검색 오버헤드 발생
+                                                        PC와 NPC의 ID 구간을 따로 설정함으로써 해결
 
        다른 컨테이너 : ID를 별도로 관리하는 오버헤드 발생
 
@@ -247,8 +246,6 @@
        }
 
        while (true) {
-           auto current_time = current_time();
-
            for (int i = 0; i < MAX_NPC; ++i) {
                NPC[i].heart_beat();
            }
@@ -270,7 +267,7 @@
            high_resolution_clock::time_point wakeup_time;
 
            constexpr bool operator<(const event_type& _Left) const {
-               return (wakeup_time > _Left.wakeup_time);
+               return (wakeup_time < _Left.wakeup_time);
            }
        };
     
