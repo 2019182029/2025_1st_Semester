@@ -365,10 +365,11 @@
        Java, JavaScript : 높은 인지도
                           가비지 컬렉션 랙
 
-       C# : C에서 호출 오버헤드 존재
-            멀티쓰레드 지원
+       C# : 멀티쓰레드 지원
+            C에서 호출 오버헤드 존재
 
-       XML : 언어가 아니며, 최근에는 JSON 사용
+       XML : 언어가 아니다.
+             최근에는 JSON 사용
 
 
  3. LUA
@@ -416,9 +417,10 @@
           int main() {
               const char* buff = "print \"Hello from Lua.\"\n";
 
-              lua_State* L = luaL_newstate();  // Open LUA
-              luaL_openlibs(L);  // Open LUA Standard Library
-              luaL_loadbuffer(L, buff, strlen(buff), "line");
+              lua_State* L = luaL_newstate();                  // Open LUA
+              luaL_openlibs(L);                                // Open LUA Standard Library
+
+              luaL_loadbuffer(L, buff, strlen(buff), "line");  
 
               int error = lua_pcall(L, 0, 0, 0);
               if (error) {
@@ -442,9 +444,9 @@
        실습 2
        → // exl.lua
           function plustwo(x)
-          local a
-          a = 2
-          return x + a
+              local a
+              a = 2
+              return x + a
           end
 
           pos_x = 6
@@ -456,6 +458,7 @@
 
               lua_State* L = luaL_newstate();
               luaL_openlibs(L);
+
               luaL_loadfile(L, "exl.lua");
 
               lua_pcall(L, 0, 0, 0);
@@ -466,38 +469,41 @@
               cols = (int)lua_tonumber(L, -1);
 
               lua_pop(L, 2);
+
               lua_close(L);
           }
           → LUA의 Virtual Machine은 Stack Machine이다.
              → C++와 LUA 프로그램 간의 자료 교환은 Stack을 통해 이뤄진다.
-                → LUA 함수 호출 시 매개변수 Push : lua_pushnumber(L, 1);
-                   Stack에 저장된 값 읽기 : (int)lua_tonumber(L, -1);
+                → LUA 함수 호출 시 매개변수 Push : lua_pushnumber(L, arg);
                    Stack에 글로벌 변수 값 저장하기 : lua_getglobal(L, "rows");
+                   Stack에 저장된 값 읽기 : (int)lua_tonumber(L, -1);
 
        실습 3
        → // exl.lua
           function add_num_lua(a, b)
-          return c_addnum(a, b)
+              return c_addnum(a, b)
           end
 
           // lua.cpp
-          int addnum_c(lua_State* L) {
+          int c_addnum(lua_State* L) {
               int a = (int)lua_tonumber(L, -2);
               int b = (int)lua_tonumber(L, -1);
 
               int result = a + b;
 
               lua_pop(L, 2);
+
               lua_pushnumber(L, result);
+
               return 1;
           }
 
           int main() {
               ...
 
-              lua_register(L, "c_addnum", addnum_c);
+              lua_register(L, "c_addnum", c_addnum);
 
-              lua_getglobal(L, "addnum_lua");
+              lua_getglobal(L, "add_num_lua");
               lua_pushnumber(L, 100);
               lua_pushnumber(L, 200);
 
@@ -506,6 +512,8 @@
               result = (int)lua_tonumber(L, -1);
 
               lua_pop(L, 1);
+
+              ...
           }
 
 
@@ -528,7 +536,8 @@
 
                  Worker Thread & MM VM : 객체 하나당 하나의 VM
                                          메모리 낭비 발생  // 대부분의 VM이 대기 상태
-                                         → LUA라서 가능, Event에 따라 적절한 LUA 함수 호출
+                                         → LUA라서 가능
+                                            Event에 따라 적절한 LUA 함수 호출
                                             스크립트 언어가 실행하기 곤란한 기능을 게임 서버에서 API로 제공해 주어야 한다.
 
     → 구현 : SESSION에 lua_State* 할당
@@ -562,10 +571,12 @@
                      luaL_openlibs(L);
 
                      luaL_loadfile(L, "monster.lua");
+
                      lua_pcall(L, 0, 0, 0);
 
                      lua_getglobal(L, "set_uid");
                      lua_pushnumber(L, my_id);
+
                      lua_pcall(L, 1, 0, 0);
 
                      lua_register(L, "API_send_message", API_send_message);
@@ -581,6 +592,7 @@
                      int x = players[user_id].x;
 
                      lua_pushnumber(L, x);
+
                      return 1;
                  }
 
@@ -592,6 +604,7 @@
                      lua_pop(L, 3);
 
                      send_chat_packet(user_id, my_id, mess);
+
                      return 0;
                  }
 
@@ -603,6 +616,7 @@
 
                          lua_getglobal(objects[id].L, "event_player_move");
                          lua_pushnumber(objects[id].L, caller_id);
+
                          lua_pcall(objects[id].L, 1, 0, 0);
 
                          objects[id].lua_lock.unlock();

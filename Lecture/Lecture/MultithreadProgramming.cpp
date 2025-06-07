@@ -86,7 +86,7 @@
  ■ 다중 대입 객체
 
  1. 다중 대입 객체
-    → 멤버 변수로 크기가 n인 배열을 갖고, 복수의 원소를  Atomic하고 Wait-Free하게 변경할 수 있는 객체
+    → 멤버 변수로 크기가 n인 배열을 갖고, 복수의 원소를 Atomic하고 Wait-Free하게 변경할 수 있는 객체
        → Assign : 인자로 m개의 값과 m개의 인덱스를 받아 대입한다.  
           Read : 인자로 인덱스를 i를 받아 n[i]를 반환한다.
 
@@ -184,10 +184,151 @@
                          }
                      }
                  }
-                 → 모든 자료구조를 n 쓰레드에서 Non-Blocking하게 구현할 수 있다.
+                 → 모든 자료구조를 n 쓰레드에서 Wait-Free하게 구현할 수 있다.
 
  ====================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================
- 
+
+ ■ 만능성
+
+ 1. 합의의 의미
+    → 적은 합의 수를 갖는 객체로 큰 합의 수 객체를 구현할 수 없다.
+       → 합의 수 1 : Atomic 메모리
+          합의 수 2 : GetAndSet, GetAndAdd, 큐, 스택
+          합의 수 n : (n, n * (n + 1) / 2) 대입 객체
+          합의 수 X : 메모리 이동, CompareAndSet(), LL-SC
+
+       → 의의 : 불가능한 시도를 미연에 방지할 수 있다.
+                 구현 방법과 원리를 알면, 최적화에 도움이 된다.
+
+
+ 2. 만능 
+    → 클래스 C와 Atomic 메모리로 모든 객체를 Wait-Free하게 변환하는 것이 가능하다면, 클래스 C는 만능이다.
+       → 클래스 C를 사용하여 직접적으로 변환하지 않고, Atomic 메모리를 사용하여 대상 객체를 약간 변형한 후 변환한다.  // 메소드, 파라미터, 리턴값 통합
+
+       → 만능 객체 : 어떠한 객체든 Wait-Free하게 변환하는 것이 가능한 객체
+                      → n 쓰레드에서 동작하는 만능 객체는 합의 수 n 이상의 객체로 구현 가능하다.
+                         → 무한대의 합의 수를 갖는 CAS 객체를 통해 쓰레드 개수에 상관없이 만능 객체를 구현할 수 있다.
+
+
+ 3. 순차 객체
+    → 조건 : 순차 객체는 결정적이다.
+              → 모든 객체의 초기 상태는 동일하다.
+                 같은 상태에서 같은 입력을 주면 항상 같은 결과가 나온다.
+
+    → 순차 객체 : 변환하고자 하는 객체를 감싼 객체
+                   메소드를 apply 하나로 통일
+                   → class Invocation {
+                          MethodType type;
+                          int v;
+                      };
+                      → Invocation : 변환하고자 하는 객체의 메소드와 입력값을 갖는 객체
+
+                      class SeqObject {
+                      private:
+                          std::set<int> m_set;
+
+                      public:
+                          Response apply(Invocation invoc) {
+                              Response r{ true };
+
+                              switch (invoc.type) {
+                              case ADD:
+                                  r.m_bool = m_set.insert(invoc.v).second;
+                                  break;
+
+                              case REMOVE:
+                                  r.m_bool = (0 != m_set.count(invoc.v));
+
+                                  if (true == r.m_bool) {
+                                      m_set.erase(invoc.v);
+                                  }
+                                  break;
+
+                              case CONTAINS:
+                                  r.m_bool = (0 != m_set.count(invoc.v));
+                                  break;
+                              }
+
+                              return r;
+                          }
+                      };
+                      → Response : 여러 메소드의 결과 값을 압축한 객체
+
+
+ 4. Lock-Free 만능 객체
+    → class NODE {
+       public:
+           Invocation m_inv;
+           int m_seq;
+           NODE* volatile next;
+       };
+       → Log는 tail부터 시작하는 NODE의 리스트이다.
+          → 지금까지 순차 객체에 가해진 모든 메소드 호출을 보관
+             순차 객체와 Log를 조합하여 순차 객체의 모든 상태를 알 수 있다.
+
+       class LFUniversal {
+       private:
+           NODE* volatile m_head[MAX_THREADS];
+           NODE* tail;
+
+           NODE* get_max_head() {
+               NODE* h = m_head[0];
+
+               for (int i = 1; i < MAX_THREADS; ++i) {
+                   if (h->m_seq < m_head[i]->m_seq) {
+                       h = m_head[i];
+                   }
+               }
+
+               return h;
+           }
+
+       public:
+           LFUniversal() {
+               tail.m_seq = 0;
+               tail.next = nullptr;
+               
+               for (auto& h : m_head) {
+                   h = &tail;
+               }
+           }
+
+           RESPONSE apply(Invocation invoc) {                                       
+               NODE* prefer = new NODE{invoc, 0, nullptr};                          
+
+               while (0 == prefer->m_seq) {                                         // prefer가 성공적으로 추가되었는지 검사
+                   NODE* head = get_max_head();
+                   long long temp = 0;
+
+                   std::atomic_compare_exchange_strong(                             // 합의 객체를 사용하여 새로운 NODE를 Log의 head에 덧붙인다.
+                       reinterpret_cast<volatile std::atomic_llong*>(&head->next),  
+                       &temp,
+                       reinterpret_cast<long long>(prefer));
+
+                   NODE* after = head->next;
+                   after->m_seq = head->m_seq + 1;                                  // 여러 쓰레드가 같은 작업을 반복할 수 있지만, 상관 없다.
+                   m_head[thread_id] = after;                                       // 동일한 합의 객체를 두 번 이상 호출하지 않도록 한다.
+               }
+
+               SeqObject std_set;                                                   // 순차 객체를 생성한 후, 
+               NODE* p = tail.next;
+
+               while (p != prefer) {                                                
+                   std_set.apply(p->m_inv);                                         // Log에 있는 Invocation을 새로운 호출까지 적용시키고,
+                   p = p->next;
+               }
+
+               return std_set.apply(invoc);                                         // 그 결과를 반환한다.
+           }
+       }
+       → 합의 객체가 노드마다 존재하며, 각 쓰레드는 head 배열을 통해 한 번 호출한 합의 객체를 다시 호출하지 않는다.
+          합의 객체로 인해 한 NODE의 next는 어떤 쓰레드에서도 유일하다.
+          순차 객체는 매 호출마다 생성되며, 다른 쓰레드는 절대로 해당 순차 객체를 호출하지 않는다.
+          
+    → Lock-Free인 이유? : 다른 노드에서 계속 head 배열을 갱신하는 경우 무한히 실행될 수 있기 때문
+                         
+ ====================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================
+
  ■ Lazy SkipList
 
  1. Lazy SkipList
