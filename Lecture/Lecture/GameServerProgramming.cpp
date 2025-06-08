@@ -168,9 +168,6 @@
 
 
  5. 길 찾기 알고리즘
-    → 그래프 최단 경로 탐색 : 그래프의 노드 정의 필요
-                               Weight를 부여할 수도 있다.
-
     → 가면서 찾기 : 지형 전체를 알 수 없는 경우  
                      → 랜덤
                         장애물 따라 돌기
@@ -624,5 +621,119 @@
                          delete eo;
                          break;
                  }
-                 
+        
+ ====================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================
+
+ ■ DB
+
+ 1. DB
+    → 구조화된 데이터의 모임
+       컴퓨터에 저장, 쿼리를 사용하여 접근
+
+    → 요구 사항
+       → 저장소 : 인덱스를 통한 고속 검색
+          트랜잭션, 동시성
+          복제 : 안정성, 부하 분산
+          보안
+
+    → 사용 이유
+       → 데이터 크기 : 서버 프로그램이 모든 데이터를 메모리에 가지고 있기 어렵다.
+          데이터 보존 : 서버 프로그램이 종료되어도 데이터가 남아 있어야 한다.
+          안정성, 효율성 : 상용 DB보다 데이터 관리를 잘하는 프로그램을 만들기 어렵다.
+
+       → 장점 : 각종 툴을 사용할 수 있다.
+                 제 3자의 데이터 관리 프로그램 작성이 가능하다.
+
+          단점 : 잘 모르는 상태에서 사용하면 해결하기 어려운 문제를 맞닥뜨릴 수 있다.
+
+
+ 2. 데이터
+    → DB에 저장되는 데이터 : 과금 정보 등
+                              → 게임 로그는 저장만 수행하고 읽지 않는다.
+
+       DB에 저장되지 않는 데이터 : 서버 재부팅 시 초기화되는 정보
+                                   게임 플레이 중 변경되지 않는 정보
+                                   → 파일로 저장되어 서버 부팅 시 메모리에 읽는다.
+
+    → 서버는 얼마나 자주 DB에 접근해야 하는가?
+       → 필수 : 캐릭터 LOGIN, 캐릭터 LOGOUT, 서버 BOOTING, 서버 SHUTDOWN
+          추가적 : 아이템 거래       // DB 반영 이후 거래 성사
+                   주기적 Auto Save  // 중요도와 주기는 반비례
+                   중요한 데이터 변경
+                   → 서버 다운에도 안전하게!
+
+
+ 3. 게임 서버
+    → DB 접근은 Blocking API : DB 접근 쓰레드와 Worker 쓰레드를 분리
+                                → DB 관련 프로토콜 정의 필요
+                                   Multiple Write / Single Read Concurrent Queue 필요
+                                   프로세스 간의 통신 오버헤드 존재
+                                
+                                다른 컴퓨터에서 수행 : 부하와 메모리 분산
+                                                       Cache 서버 혹은 Query 서버라고 불리기도 한다.
+
+       DB 접근마다 SQLConnect를 사용하는 것은 오버헤드 大 : SQLConnect로 연결한 핸들을 계속 저장해두고 사용
+                                                            → 멀티쓰레드인 경우
+                                                               → 방법 1 : Lock 사용 
+                                                                  방법 2 : 쓰레드마다 핸들 생성
+
+
+ 4. SQL 
+    → DB의 데이터를 조작하는 언어
+       → CREATE : CREATE TABLE items (id INT, type INT);
+          UPDATE : UPDATE items SET type = 3 WHERE id = 42;
+          SELECT : SELECT * FROM items WHERE id = 42;
+          INSERT : INSERT INTO items (id, type) VALUES (1043, 21);
+          DELETE : DELETE FROM items WHERE id = 1043;
+
+
+ 5. ODBC
+    → 프로그래밍 언어에서 SQL을 사용하기 위한 표준
+       → #include <sqlext.h>
+          
+          HENV henv;    // ODBC 환경 핸들
+          HDBC hdbc;    // DB 연결 핸들
+          HSTMT hstmt;  // SQL 실행 핸들
+
+          SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &henv);                           // ODBC 환경 핸들 생성
+          → 핸들의 종류, 상위 핸들, 새로 생성된 핸들을 받을 포인터
+
+          SQLSetEnvAttr(henv, SQL_ATTR_ODBC_VERSION, (SQLPOINTER*)SQL_OV_ODBC3, 0);         // ODBC 버전 지정
+          → 환경 핸들, 설정할 속성, 속성 값, 문자열일 경우 문자열의 길이
+
+          SQLAllocHandle(SQL_HANDLE_DBC, henv, &hdbc);                                      // DB 연결 핸들 생성
+
+          SQLSetConnectAttr(hdbc, SQL_LOGIN_TIMEOUT, (SQLPOINTER)5, 0);                     // 로그인 타임아웃 설정
+          → 연결 핸들, 설정할 속성, 속성 값, 문자열일 경우 문자열의 길이
+
+          SQLConnect(hdbc, (SQLWCHAR*)L"2025_game", SQL_NTS, NULL, 0, NULL, 0);             // DB 연결
+          → 연결 핸들, DSN, 문자열일 경우 SQL_NTS, ID, 0 또는 SQL_NTS, PW, 0 또는 SQL_NTS
+
+          SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt);                                    // SQL 실행 핸들 생성
+
+          SQLExecDirect(hstmt, (SQLWCHAR*)L"EXEC stored_procedured param", SQL_NTS);        // Stored Procedure 호출
+          → SQL 실행 핸들, Stored Procedure, 문자열일 경우 SQL_NTS
+             → Stored Procedure :  일련의 동작을 SQL로 프로그래밍하여 DB에 저장해놓은 것
+                                    → 장점 : 성능 향상
+                                              Transaction 구현
+                                              네트워크 트래픽 감소
+                                              보안
+
+          SQLBindCol(hstmt, 1, SQL_C_LONG, &user_id, sizeof(user_id), &cb_user_id);         // 결과 컬럼을 C++ 변수에 바인딩
+          → SQL 실행 핸들, 결과셋의 몇 번째 컬럼인지, C 타입, 데이터를 저장할 변수의 주소, 버퍼 크기, 실제 읽힌 값을 저장할 변수의 주소
+
+          SQLFetch(hstmt);                                                                  // 다음 결과 행 가져오기
+          → SQL 실행 핸들
+
+          SQLCancel(hstmt);                       
+          SQLFreeHandle(SQL_HANDLE_STMT, hstmt); 
+          SQLDisconnect(hdbc);                    
+          SQLFreeHandle(SQL_HANDLE_DBC, hdbc);    
+          SQLFreeHandle(SQL_HANDLE_ENV, henv);
+
+    → 오류 발생 시 대처
+       → 변수의 크기를 나타내는 매개변수 확인  // 문자열의 경우 SQL_NTS를 사용해야 한다.
+          SQLCHAR를 SQLWCHAR로 바꾸고, 모든 문자열을 "..."에서 L"..."으로 바꾼다.
+          핸들은 타임아웃 시간이 설정되어 있다.  // 기본 8시간
+
 */
