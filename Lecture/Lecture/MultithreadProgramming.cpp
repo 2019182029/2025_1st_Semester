@@ -413,6 +413,301 @@
 
  ====================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================
 
+ ■ 큐
+
+ 1. 풀
+    → 특징 : 같은 아이템의 복수 존재 허용
+              Get(), Set() 메소드를 제공한다.
+              Contains() 메소드를 항상 제공하지 않는다.
+              보통 생산자 - 소비자 문제의 버퍼로 사용한다.
+
+    → 종류
+       → 무제한 큐
+          제한 큐 : 구현하기 쉽다.
+                    생산자와 소비자의 간격을 제한한다.
+                    → ConditionVariable() 메소드 필요
+                       → 스케줄 될 때 Lock 획득
+                          Lock을 가진 채로 Block 시 Lock 해제
+                          운영체제 호출 필요  // 쓰레드 스케줄링과의 연동 필수
+
+    → 성질
+       → 완전 : 특정 조건을 기다릴 필요가 없다.  // 비어있는 풀에 Get() 메소드 호출 시 실패 코드 반환
+          부분적 : 특정 조건의 만족을 기다려야 한다.  // 비어있는 풀에 Get() 메소드 호출 시 다른 누군가의 Set() 메소드 호출을 기다린다.
+          동기적 : 다른 쓰레드의 메소드 호출과의 중첩이 필요하다.
+
+
+ 2. 큐
+    → Enq
+       → 단순한 구현 : tail이 가리키는 Node에 CAS로 새 노드 추가
+                        성공 시 tail 이동
+                        실패 시 재시도
+                        → void Enq(int x) {
+                               Node* n = new Node(x);
+
+                               while (true) {
+                                   if (CAS(&tail->next, NULL, n) {
+                                       tail = e;
+                                       return;
+                                   }
+                               }
+                           }
+                           → 문제점 : CAS 성공 후 tail의 전진이 이뤄지지 않을 시에도 다른 모든 쓰레드 Non-Blocking으로 동작해야 한다.
+                                       → 해결책 : tail의 전진을 보조한다.
+
+       → 1차 수정 : void Enq(int x) {
+                         Node* n = new Node(x);
+
+                         while (true) {
+                             if (CAS(&tail->next, NULL, n) {
+                                 tail = e;           // A
+                                 return;
+                             }
+
+                             if (nullptr != tail->next) {
+                                 tail = tail->next;  // B
+                             }
+                         }
+                     }
+                     → 문제점 : A, 이제는 안전하지 않다.
+                                 B, 다른 쓰레드의 변경을 덮어쓸 수 있다.
+                                 → 해결책 : CAS 사용
+
+       → 2차 수정 : void Enq(int x) {
+                         Node* n = new Node(x);
+
+                         while (true) {
+                             Node* last = tail;
+                             Node* next = last->next;
+
+                             if (last != tail) { continue; }
+
+                             if (nullptr == next) {
+                                 if (CAS(&last->next, nullptr, n)) {
+                                     CAS(&tail, &last, n);
+                                     return;
+                                 } 
+                             } else {
+                                 CAS(&tail, &last, next);
+                             }
+                         }
+                     }
+
+    → Deq
+       → 단순한 구현 : 큐가 비어 있는지 검사
+                        head 전진
+                        → int deq() {
+                               while (true) {
+                                   Node* first = head;
+
+                                   if (first != head) { continue; }
+
+                                   if (nullptr == first->next) { empty_error(); }
+
+                                   if (CAS(&head, &first, first->next) {
+                                       int value = first->next->item;
+                                       delete first;
+                                       return value;
+                                   }
+                               }
+                           }
+                           → 문제점 : 다른 쓰레드에서 first->next를 이미 delete 했을 가능성 有
+                                       
+       → 1차 수정 : int deq() {
+                         while (true) {
+                             Node* first = head;
+                             Node* next = first->next;
+
+                             if (first != head) { continue; }
+
+                             if (nullptr == next) { empty_error(); }
+
+                             int value = next->item;
+
+                             if (CAS(&head, &first, next)) {
+                                 delete first;
+                                 return value;
+                             }
+                         }
+                     }
+                     → 문제점 : Enq에서 tail의 전진이 이뤄지지 않았을 시에도 Non-Blocking으로 동작해야 한다.
+                                 → 해결책 : tail의 전진을 보조한다.
+
+       → 2차 수정 : int deq() {
+                         while (true) {
+                             Node* first = head;
+                             Node* last = tail;
+                             Node* next = first->next;
+
+                             if (first != head) { continue; }
+
+                             if (nullptr == next) { empty_error(); }
+
+                             if (first == last) {
+                                 CAS(&tail, &last, next);
+                                 continue;
+                             }
+
+                             int value = next->item;
+
+                             if (CAS(&head, &first, next)) {
+                                 delete first;
+                                 return value;
+                             }
+                         }
+                     }
+
+
+ 3. ABA
+    → 문제점 : new(), free()는 메모리를 재사용하므로, CAS 수행 시 동일한 주소에 동일한 값을 갖는 다른 객체가 들어오는 경우 문제가 발생한다.  // Java는 Garbage Collector를 사용하므로 이러한 문제가 발생하지 않는다.
+                → 해결책 1 : 포인터와 스탬프의 확장 구조체를 포인터로 사용한다.
+                              → LL-SC 명령 : 값을 검사하는 것이 아닌, 변경 여부를 검사
+                                              → CAS보다 우월하지만, Wait-Free가 아니다.
+
+                   해결책 2 : 참조 카운터를 사용한다.
+                              → std::atomic<std::shared_ptr<>> : 특정 노드를 참조 중인 쓰레드가 있을 경우, 해당 노드는 재사용될 수 없다.
+                                                                  → std::atmoic<std::shared_ptr>>는 Lock-Free가 아니다.
+
+                   해결책 3 : 별도의 메모리 관리 기법을 사용한다.
+                              → EBR, Hazard Pointer, etc...
+
+
+    → 이론
+       → 32bit : ST_Ptr는 64bit 자료구조이므로, 캐시 경계선에 놓일 수 있다.
+                  → std::atomic_llong으로 선언
+
+          64bit : ST_Ptr는 128bit 자료구조이므로, 128bit CAS 필요
+                  → BOOLEAN InterlockedCompareExchange128(
+                         LONG64 volatile* Dest,
+                         LONG64           ExchangeHigh,
+                         LONG64           ExchangedLow,
+                         LONG64*          ComparandResult
+                     );
+                     → 자료구조를 128bit 단위로 정렬해야 한다.  // 캐시 라인 문제
+                        → class alignas(16) ST_Ptr {
+                           public:
+                               ST_Node* volatile ptr;
+                               long long volatile stamp;
+                               
+                               ST_Ptr(const ST_Ptr& rhs) {
+                                   ST_Ptr temp{ this->ptr, this->st };
+
+                                   while (InterlockedCompareExchanged128(
+                                       reinterpret_cast<LONG64 volatile*>(this),
+                                       rhs.stamp,
+                                       reinterpret_cast<LONG64>(rhs.ptr),
+                                       reinterpret_cast<LONG64*>(&temp)
+                                   ));
+                               }
+
+                               void set(ST_NODE* p) {
+                                   ptr = p;
+                                   stamp = stamp + 1;
+                               }
+
+                               ST_NODE* get_ptr() {
+                                   return ptr;
+                               }
+                           }
+
+                           class ST_Node {
+                           public:
+                               int v;
+                               ST_Ptr next;
+                           }
+
+                     → bool CAS(ST_Ptr* next_ptr, ST_NODE* old_ptr, ST_NODE* new_ptr, long long old_st, long long new_st) {
+                            ST_Ptr old_st { old_ptr, old_st };
+
+                            return InterlockedCompareExchange128(
+                                reinterpret_cast<LONG64 volatile*>(next_ptr),
+                                new_stamp,
+                                reinterpret_cast<LONG64>(new_ptr),
+                                reinterpret_cast<LONG64*>(&old_st)
+                            );
+                        }
+
+                     → 문제점 : 모든 ST_Ptr load와 store가 atomic하게 동작해야 하지만, atomic_128int는 존재하지 않는다.
+                                 → 모든 load와 store에 InterlockedCompareExchange128을 사용해야 하므로 성능이 저하된다.
+                                 
+                                 메모리 재사용 시 head->next가 오염될 수 있다.
+                                 → 해결책 : free_list를 사용하여 오염을 막는다.
+                                             Lock-Free 혹은 thread_local로 구현해야 한다.
+
+    → 구현 : class ST_Queue {
+              private:
+                  ST_Ptr head{ nullptr };
+                  ST_Ptr tail{ nullptr };
+
+              public:
+                  ST_Queue() {
+                      ST_Node* n = new ST_Node(-1);
+
+                      head.set(n);
+                      tail.set(n);
+                  }
+
+                  bool CAS(...) { ... }
+
+                  void Enq(int x) {
+                      ST_Node* n = nullptr;
+
+                      if (free_node == nullptr) {
+                          n = new ST_Node{ x };
+                      } else {
+                          n = free_node;
+                          free_node = free_node->next.get_ptr();
+                          n->next.set(nullptr);
+                          n->next.stamp = 0;
+                          n->v = x;
+                      }
+
+                      while (true) {
+                          ST_Ptr last{ tail };
+                          ST_Ptr next{ last.get_ptr()->next };
+
+                          if (last.stamp != tail.stamp) { continue; }
+
+                          if (nullptr == next.get_ptr()) {
+                              if (CAS(&last.get_ptr()->next, nullptr, n, next.stamp, next.stamp + 1) {
+                                  CAS(&tail, last.get_ptr(), n, last.stamp, last.stamp + 1);
+                                  return;
+                              }
+                          } else {
+                              CAS(&tail, last.get_ptr(), next.get_ptr(), last.stamp, last.stamp + 1);
+                          }
+                      }
+                  }
+
+              int Deq() {
+                  while (true) {
+                      ST_Ptr first{ head };
+                      ST_Ptr last{ tail };
+                      ST_Ptr next{ first.get_ptr()->next };
+
+                      if (first.stamp != head.stamp) { continue; }
+
+                      if (nullptr == next.get_ptr()) { empty_error(); }
+
+                      if (first.get_ptr() == last.get_ptr()) {
+                          CAS(&tail, last.get_ptr(), next.get_ptr(), last.stamp, last.stamp + 1);
+                          continue;
+                      }
+
+                      int value = next.get_ptr()->v;
+
+                      if (CAS(&head, first.get_ptr(), next.get_ptr(), first.stamp, first.stamp + 1) {
+                          first.get_ptr()->next.stamp = 0;
+                          first.get_ptr()->next.set(free_node);
+                          free_node = first.get_ptr();
+
+                          return value;
+                      }
+                  }
+              }
+          }
+
+ ====================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================
+
  ■ Lazy SkipList
 
  1. Lazy SkipList
@@ -621,3 +916,4 @@
                   }
 
 */
+
