@@ -639,15 +639,6 @@
                   ST_Ptr tail{ nullptr };
 
               public:
-                  ST_Queue() {
-                      ST_Node* n = new ST_Node(-1);
-
-                      head.set(n);
-                      tail.set(n);
-                  }
-
-                  bool CAS(...) { ... }
-
                   void Enq(int x) {
                       ST_Node* n = nullptr;
 
@@ -710,7 +701,368 @@
 
  ■ 스택
 
+ 1. 스택
+    → 연결 리스트로 구성
+       top은 첫 번째 노드를 가리킨다.
+       → -1을 스택에 추가하는 것은 고려하지 않는다.
+          스택이 비어있을 경우 top은 nullptr
+          스택이 비어있을 경우 Pop() 메소드는 -2를 리턴한다.
 
+
+ 2. 무잠금 스택
+    → CAS를 이용하여 top의 변환을 Non-Blocking으로 구현한다.
+       ABA 문제를 방지하기 위해 delete하지 않는다.
+
+    → 구현 : class LF_STACK {
+              private:
+                  NODE* volatile top;
+
+                  bool CAS(NODE* old, NODE* new) {
+                      return std::atomic_compare_exchange_strong(
+                          reinterpret_cast<volatile std::atomic_llong*>(&top),
+                          reinterpret_cast<long long*>(&old),
+                          reinterpret_cast<long long>(new);
+                  }
+
+              public:
+                  void Push(int x) {
+                      Node* n = new Node{ x };
+
+                      while (true) {
+                          Node* last = top;
+
+                          n->next = last;
+
+                          if (CAS(last, n)) { return; }
+                      }
+                  }
+
+
+                  int Pop() {
+                      while (true) {
+                          NODE* last = top;
+
+                          if (nullptr == last) { return -2; }
+
+                          Node* next last->next;
+
+                          if (last != top) { continue; }
+
+                          int v = last->key;
+
+                          if (CAS(last, next)) { return v; }
+                      }
+                  }
+              }
+              → 문제점 : 메소드 호출은 스택의 top에 대해 성공한 CAS 순서로 하나씩 진행되므로, 순차병목현상이 나타날 수 있다.
+                          new, delete 사용 시 ABA 문제가 발생할 확률이 큐보다 높다.
+                          경쟁이 심해질 경우 CAS가 실패할 확률이 높아지고, 모든 코어의 메모리 접근이 중단된다.
+
+
+ 3. BACK OFF 스택
+    → CAS가 실패했을 경우 적절한 기간 동안 실행을 멈춘다.
+       → 처음에는 짧게
+          계속 실패하면 점점 길게
+          첫 번째 시도에 성공하게 짧게
+          쓰레드마다 기간을 범위 안에서 랜덤하게 설정
+
+    → BACK OFF 객체 : CAS가 실패했을 경우 다음 CAS를 시도하기 전에 사용
+                       → class BackOff {
+                          private:
+                              int minDelay, maxDelay,
+                              int limit;
+
+                          public:
+                              void InterruptedException() {
+                                  int delay = 0;
+                                  if (0 != limit) delay = rand() % limit;
+                                  if (0 == delay) return;
+                                  limit = limit + limit;
+                                  if (limit > maxDelay) limit = maxDelay;
+
+                                  delay = delay * delay;
+                                  for (int i = 0; i < delay; ++i) {
+                                      mm_pause();
+                                  }
+                              }
+
+                              void decrement() {
+                                  limit = limit / 2;
+                                  if (limit < minDelay) limit = minDelay;
+                              }
+                          }
+
+    → 구현 : class LF_BO_STACK {
+              private:
+                  ...
+
+              public:
+                  void Push(int x) {
+                      Node* n = new Node{ x };
+                      bool first_time = true;
+
+                      while (true) {
+                          Node* last = top;
+                          n->next = last;
+
+                          if (CAS(last, n)) {
+                              if (first_time) { bo.decrement(); }
+                              return;
+                          }
+
+                          first_time = false;
+                          bo.interruptedException();
+                      }
+                  }
+
+                  int Pop() {
+                      bool first_time = true;
+                        
+                      while (true) {
+                          NODE* volatile last = m_top;
+                           
+                          if (nullptr == last) { return -2; }
+
+                          NODE* volatile next = last->next;
+
+                          if (last != m_top) { continue; }
+
+                          int v = last->key;
+
+                          if (true == CAS(last, next)) {
+                              if (first_time) { bo.decrement(); }
+                              return v;
+                          }
+
+                          first_time = false;
+                          bo.InterruptedException();
+                      }
+                  }
+              }
+              → 절대 시간이 중요하지 않다.
+                 루프에서 메모리 접근을 수행하지 않는 것이 바람직하다.
+                 → _asm mov eax, delay;
+                    myloop:
+                    _asm dec eax
+                    _asm jnz myloop;
+
+
+ 4. 소거
+    → 큐와 스택은 리스트의 말단 부분에서 잦은 충돌이 발생하므로 fine-grained synchronization이 불가능하다.
+       → 쓰레드가 서로 충돌할 경우 별도의 객체를 통해 Lock-Free로 데이터를 주고 받도록 한다.
+          높은 경쟁에 대비하여 별도의 객체를 복수로 준비한다.
+          → Push() 메소드와 Pop() 메소드가 거의 동시에 호출된다면 각각의 쓰레드는 스택 변화 없이 Lock-Free로 값을 교환할 수 있다.  // 서로를 소거한다고 표현한다.
+
+    → EliminationArray : 여러 개의 원소를 갖고 부하를 분산
+                          → 경쟁이 심할 경우 원소의 개수가 많아야 하고, 경쟁이 적을 경우 원소의 개수가 적어야 한다.
+                             → Visit() 메소드 호출 시 RET_BUSY_TIMEOUT이 리턴되었을 경우 늘린다.
+                                Visit() 메소드 호출 시 RET_TIMEOUT이 리턴되었을 경우 줄인다.
+
+                          쓰레드는 임의의 원소를 골라 소거 시도
+                          → 임의 X : 정보 전달 자체가 오버헤드이고, Lock-Free 구현이 어렵다. 
+
+                          class EliminationArray {
+                          private:
+                              Exchanger exchanger[MAX_EXCHANGER];
+
+                          public:
+                              int Visit(int x) {
+                                  if (range == 0) range = 1;
+
+                                  int slot = rand() % range;
+
+                                  int ret = exchanger[slot].exchange(x);
+
+                                  int old_range = range;
+
+                                  if (RET_BUSY_TIMEOUT == ret) {
+                                      if (old_range > 1) {
+                                           std::atomic_compare_exchange_strong(
+                                               reinterpret_cast<std::atomic_int*>(&range),
+                                               &old_range,
+                                               old_range - 1);
+                                      }
+                                  } else if (RET_TIMEOUT == ret) {
+                                        if (old_range < MAX_EXCHANGER - 1) {
+                                           std::atomic_compare_exchange_strong(
+                                               reinterpret_cast<std::atomic_int*>(&range),
+                                               &old_range,
+                                               old_range + 1);
+                                  }
+
+                                  return ret;
+                              }
+                          }
+
+    → Exchanger : 두 개의 쓰레드가 Lock-Free로 값을 교환할 수 있게 해주는 객체
+                   두 개의 쓰레드가 Exchange() 메소드를 호출하면 서로의 입력 값을 리턴한다.
+                   리턴 서로의 입력 값과 상태(성공, 실패, 타임아웃(-2))이다.
+
+                   → Exchanger는 3개의 상태를 갖는다.
+                      → EMPTY : CAS를 이용하여 slot에 자신의 입력 값을 넣고 상태를 WAITING으로 바꾼다.
+                                 → 성공 : 스핀을 하며 다른 쓰레드의 교환 시도를 기다린다.
+                                           교환이 완료된 후 대기 중이던 쓰레드는 상태를 EMPTY로 바꾼다.  // 한 쓰레드만 작업하므로 CAS 사용 X
+
+                                    실패 : 처음부터 다시 시도
+
+                                 다른 쓰레드가 나타나지 않는다면, CAS를 이용하여 상태를 EMPTY로 바꾼다.
+                                 → 성공 : RET_TIME_OUT 리턴
+                                  
+                                    실패 : 다른 쓰레드가 나타났다는 의미이므로, 대기 중이던 쓰레드는 교환을 완료한다.
+
+                         WAITING : CAS를 이용하여 slot에 자신의 입력 값을 넣고 대기 중인 쓰레드의 입력 값을 얻는다.
+                                   → 성공 : 대기 중인 쓰레드의 입력 값 리턴
+
+                                      실패 : 처음부터 다시 시도
+
+                         BUSY : 처음부터 다시 시도
+                         → 값의 교환과 상태 변경을 Atomic하게 구현할 필요 有 : int의 상위 2bit를 상태를 나타내는 데 사용
+                   
+                   → class Exchanger {
+                      private:
+                          volatile unsigned int slot;
+
+                          unsigned int get_slot(unsigned int* st) {
+                              unsigned int t = slot;
+                              *st = t >> 30;
+                              unsigned int ret = t & 0x3FFFFFFF;
+                              if (ret == 0x3FFFFFFF) { return 0xFFFFFFFF; } 
+                              else { return ret; }
+                          }
+
+                          unsigned int get_state() {
+                              return slot >> 30;
+                          }
+
+                          bool CAS(unsigned int old_v, unsigned int new_v, unsigned int old_st, unsigned int new_st) {
+                              unsigned int old_slot = (old_v & 0x3FFFFFFF) + (old_st << 30);
+                              unsigned int new_slot = (new_v & 0x3FFFFFFF) + (new_st << 30);
+
+                              return std::atomic_compare_exchange_strong(
+                                  reinterpret_cast<volatile std::atomic_uint*>(&slot),
+                                  &old_slot,
+                                  new_slot);
+                          }
+
+                      public:
+                          int exchange(int v) {
+                              unsigned int st = 0;
+
+                              for (int i = 0; i < MAX_LOOP; ++i) {
+                                  unsigned int old_v = get_slot(&st);
+
+                                  switch (st) {
+                                  case EMPTY:
+                                      if (CAS(old_v, v, EMPTY, WAIT) {
+                                          bool time_out = true;
+
+                                          for (int j = 0; j < MAX_LOOP; ++j) {
+                                              if (WAIT != get_state()) {
+                                                  time_out = false;
+                                                  break;
+                                              }
+                                          }
+
+                                          if (false == time_out) {
+                                              int ret = get_slot(&st);
+                                              slot = 0;
+                                              return ret;
+                                          } else {
+                                              if (CAS(v, 0, WAIT, EMPTY) {
+                                                  return RET_TIMEOUT;
+                                              } else {
+                                                  int ret = get_slot(&st);
+                                                  slot = 0;
+                                                  return ret;
+                                              }
+                                          }
+                                      }
+                                      break;
+
+                                  case WAIT:
+                                      if (CAS(old_v, v, WAIT, BUSY) { return old_v; }
+                                      break;
+
+                                  case BUSY:
+                                      break;
+                                  }
+                              }
+                              
+                              return RET_BUSY_TIMEOUT;
+                          }
+                      }
+
+    → EliminationBackoffStack : class LF_BO_STACK {
+                                 private:
+                                     ...
+
+                                 public:
+                                     void Push(int x) {
+                                         Node* n = new Node{ x };
+
+                                         while (true) {
+                                             Node* last = top;
+
+                                             n->next = last;
+
+                                             if (CAS(last, n)) {
+                                                 return;
+                                             }
+
+                                             int ret = m_earr.Visit(x));
+
+                                             if ((RET_TIMEOUT == ret) || 
+                                                 (RET_BUSY_TIMEOUT == ret)) {
+                                                 continue;    
+                                             } else {
+                                                 if (-1 == ret) {
+                                                     delete n;
+                                                     return;
+                                                 } else {
+                                                     continue;
+                                                 }
+                                             }
+                                         }
+                                     }
+
+                                     int Pop() {
+                                         while (true) {
+                                             NODE* volatile last = m_top;
+
+                                             if (nullptr == last) { return -2; }
+
+                                             NODE* volatile next = last->next;
+
+                                             if (last != m_top) { continue; }
+
+                                             int v = last->key;
+
+                                             if (true == CAS(last, next)) {
+                                                 return v;
+                                             }
+
+                                             int ret = m_earr.Visit(x));
+
+                                             if ((RET_TIMEOUT == ret) ||
+                                                 (RET_BUSY_TIMEOUT == ret)) {
+                                                 continue;
+                                             } else {
+                                                 if (-1 != ret) {
+                                                     return ret;
+                                                 } else {
+                                                     continue;
+                                                 }
+                                             }
+                                         }
+                                     }
+                                }
+                                → LF_STACK과 달리 확장의 여지 존재
+                                   부하가 높아지면 성공적인 소거가 증가하고, 병렬적으로 여러 개의 연산이 완료된다.
+                                   소거된 연산은 스택에 접근하기 않기 때문에 경쟁이 줄어든다.
+
+    → 문제점?
+       → ABA : ABA 현상이 발생해도, 교환 대상이 바뀐 것 뿐이므로 문제가 발생하지 않는다.
+       → 타임아웃 : 너무 짧은 교환 시간은 항상 실패하므로, 타임아웃 설정에 주의해야 한다.
 
  ====================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================
 
