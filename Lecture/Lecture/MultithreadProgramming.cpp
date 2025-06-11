@@ -446,7 +446,7 @@
 
                                while (true) {
                                    if (CAS(&tail->next, NULL, n) {
-                                       tail = e;
+                                       tail = n;
                                        return;
                                    }
                                }
@@ -626,7 +626,7 @@
                             );
                         }
 
-                     → 문제점 : 모든 ST_Ptr load와 store가 atomic하게 동작해야 하지만, atomic_128int는 존재하지 않는다.
+                     → 문제점 : 모든 ST_Ptr의 load와 store가 atomic하게 동작해야 하지만, atomic_128int는 존재하지 않는다.
                                  → 모든 load와 store에 InterlockedCompareExchange128을 사용해야 하므로 성능이 저하된다.
                                  
                                  메모리 재사용 시 head->next가 오염될 수 있다.
@@ -1201,19 +1201,14 @@
                    → Add : 중간 단계의 노드는 아직 Add되지 않은 노드
                       Remove : Marking 되었으면 Remove된 노드
                    
-                   중간 단계의 노드가 발견되면 완전히 처리될 때까지 기다린 뒤 리턴
-                   Add : 아래에서부터 위로 링크 연결
-                   Remove : 아래에서부터 위로 Locking하고, 위에서부터 아래로 링크 제거
-                   → 위의 링크가 연결되지 않아도 pred, curr에 잘못된 값이 들어갈 수 있을 뿐, 검색에는 문제 없다.
-                      아래의 링크가 연결되지 않았다면 nullptr 참조 오류가 발생한다.
+                → 해결책 : 중간 단계의 노드가 발견되면 완전히 처리될 때까지 기다린 뒤 리턴
+                            Add : 아래에서부터 위로 링크 연결
+                            Remove : 아래에서부터 위로 Locking하고, 위에서부터 아래로 링크 제거
+                            → 위의 링크가 연결되지 않아도 pred, curr에 잘못된 값이 들어갈 수 있을 뿐, 검색에는 문제 없다.
+                               아래의 링크가 연결되지 않았다면 nullptr 참조 오류가 발생한다.
 
 
- 2. 메소드
-    → Add : 모든 링크가 연결되었는지 나타내는 Flag 필요
-
-       Remove : prev[]와 curr[]를 완전히 Locking하고 Marking하는 것은 비효율적  // head, tail이 Locking되면 SkipList 전체가 멈춘다.
-                Marking 후 위의 링크에서 Invalidate 발생 시 Find를 다시 수행할 필요 有
-
+ 2. 자료구조
     → 노드
        → 개별적인 잠금 : std::recursive_mutex 사용
           Marked 필드 : Remove 시 논리적으로 제거하고 있는 중이라면 true
@@ -1312,75 +1307,77 @@
                  }
              }
 
-       Remove : bool Remove(int key) {
-                    NODE* prev[MAX_LEVEL + 1];
-                    NODE* curr[MAX_LEVEL + 1];
+       Remove : prev[]와 curr[]를 완전히 Locking하고 Marking하는 것은 비효율적  // head, tail이 Locking되면 SkipList 전체가 멈춘다.
+                Marking 후 위의 링크에서 Invalidate 발생 시 Find를 다시 수행할 필요 有
+                → bool Remove(int key) {
+                       NODE* prev[MAX_LEVEL + 1];
+                       NODE* curr[MAX_LEVEL + 1];
 
-                    NODE* victim = nullptr;
-                    bool is_marked = false;
-                    int top_level = 0;
+                       NODE* victim = nullptr;
+                       bool is_marked = false;
+                       int top_level = 0;
 
-                    while (true) {
-                        int found_level = Find(key, prev, curr);
+                       while (true) {
+                           int found_level = Find(key, prev, curr);
 
-                        if (found_level != -1) {
-                            victim = curr[found_level];
-                        }
+                           if (found_level != -1) {
+                               victim = curr[found_level];
+                           }
 
-                        if (is_marked ||                                            // Marking을 했거나 제거 조건이 만족되면 제거 시도
-                            (found_level != -1 && 
-                             (victim.fullylinked &&
-                              victim.top_level == found_level &&  
-                              victim.removed == false)) {
-				            if (is_marked == false) {                               // Marking이 되지 않았으면 Marking 수행
-					            top_level = victim->top_level;
-					            victim->nl.lock();
+                           if (is_marked ||                                            // Marking을 했거나 제거 조건이 만족되면 제거 시도
+                               (found_level != -1 && 
+                                (victim.fullylinked &&
+                                 victim.top_level == found_level &&  
+                                 victim.removed == false)) {
+				               if (is_marked == false) {                               // Marking이 되지 않았으면 Marking 수행
+					               top_level = victim->top_level;
+					               victim->nl.lock();
 
-                                if (victim->removed) {                              // 다른 스레드에서 먼저 Marking했다면
-						            victim->nl.unlock();    
-                                    return false;                                   // false 리턴
-                                }
+                                   if (victim->removed) {                              // 다른 스레드에서 먼저 Marking했다면
+	      					            victim->nl.unlock();    
+                                       return false;                                   // false 리턴
+                                   }
 
-                                victim->removed = true;
-                                is_marked = true;
-                            }
+                                   victim->removed = true;
+                                   is_marked = true;
+                               }
 
-				            bool valid = true;
+		      		            bool valid = true;
 
-				            for (int level = 0; level <= top_level; ++level) {
-					            pred[level]->nl.lock();
+                               for (int level = 0; level <= top_level; ++level) {
+					               pred[level]->nl.lock();
 
-					            if ((pred[level]->removed == true) ||               // 0레벨부터 Valid 검사하며 Locking
-						            (pred[level]->next[level] != victim)) {  
-						            valid = false;
+                                   if ((pred[level]->removed == true) ||               // 0레벨부터 Valid 검사하며 Locking
+						               (pred[level]->next[level] != victim)) {  
+						               valid = false;
 
-						            for (int i = 0; i <= level; ++i) {       
-							            pred[i]->nl.unlock();                
-						            }
-						            break;
-					            }
-				            }
+                                       for (int i = 0; i <= level; ++i) {
+							               pred[i]->nl.unlock();                
+                                       }
+						               break;
+                                   }
+				               }
 
-				            if (valid == false) {                                   // Invalid할 경우
-					            continue;                                           // 처음부터 다시 시작
-				            }
+				               if (valid == false) {                                   // Invalid할 경우
+					               continue;                                           // 처음부터 다시 시작
+				               }
 
-                            for (int level = top_level; level >= 0; --level) {      // top_level부터 SkipList에서 제거한다.
-					            pred[level]->next[level] = victim->next[level]; 
-				            }
+                               for (int level = top_level; level >= 0; --level) {      // top_level부터 SkipList에서 제거한다.
+					               pred[level]->next[level] = victim->next[level]; 
+				               }
 
-				            victim->nl.unlock();
+                               victim->nl.unlock();
 
-				            for (int level = 0; level <= top_level; ++level) {
-					            pred[level]->nl.unlock();
-				            }
+				               for (int level = 0; level <= top_level; ++level) {
+					               pred[level]->nl.unlock();
+				               }
 
-				            return true;
-			            } else {                                                    // 제거 조건이 만족되지 않았다면
-				            return false;                                           // false 리턴
-		                }
-		            }
-                }
+				               return true;
+			               } else {                                                    // 제거 조건이 만족되지 않았다면
+				               return false;                                           // false 리턴
+		                   }
+		               }
+                   }
 
        Contains : bool Contains(int key) {
                       NODE* prev[MAX_LEVEL + 1];
