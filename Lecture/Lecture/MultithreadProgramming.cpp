@@ -1066,10 +1066,131 @@
 
  ====================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================
 
- ■ 스킵 리스트
+ ■ 순차 스킵 리스트
 
- 1. Lazy SkipList
-    → Non-Blocking SkipList의 전 단계
+ 1. 스킵 리스트
+    → O(logn)의 검색 시간을 갖는다.  // Worst Case : O(n)
+       재균형 작업이 필요 없는 랜덤 자료구조다.
+
+
+ 2. 순차 스킵 리스트
+    → Find() : head에서 시작
+                높은 레벨의 포인터부터 검색, 한 레벨의 검색이 끝나면 다음 레벨의 검색 시작
+                → 레벨 별 검색 결과 pred[], curr[]에 저장
+                   맨 아래 레벨에 도달할 경우 종료
+
+       Add() : 랜덤한 높이의 노드 생성  // 높이가 높을수록 노드의 개수 감소
+               → 검색한 위치에 추가
+
+    → 구현 : struct SKNODE {
+                  int key;
+                  int top_level;
+                  SKNODE* next[MAX_LEVEL + 1];
+              };
+
+              class CSKLIST {
+              private:
+                  SKNODE* head;
+                  SKNODE* tail;
+                  std::mutex sm;
+
+              public:
+                  void Find(int key, SKNODE* pred[], SKNODE* curr[]) {
+                      for (int i = MAX_LEVEL; i >= 0; --i) {
+                          if (i == MAX_LEVEL) {
+                              pred[i] = head;
+                          } else {
+                              pred[i] = pred[i + 1];
+                          }
+
+                          curr[i] = pred[i]->next[i];
+
+                          while (curr[i]->key < key) {
+                              pred[i] = curr[i];
+                              curr[i] = curr[i]->next[i];
+                          }
+                      }
+                  }
+
+                  bool Add(int key) {
+                      SKNODE* pred[MAX_LEVEL + 1];
+                      SKNODE* curr[MAX_LEVEL + 1];
+
+                      sm.lock();
+
+                      Find(key, pred, curr);
+
+                      if (curr[0]->key == key) {
+                          sm.unlock();
+                          return false;
+                      } else {
+                          int top_level = 0;
+
+                          for (int i = 0; i < MAX_LEVEL; ++i) {
+                              if (rande() % 2 == 0) { break; }
+                              ++top_level;
+                          }
+
+                          auto n = new SKNODE{ key, top_level };
+
+                          for (int i = 0; i <= top_level; ++i) {
+                              pred[i]->next[i] = n;
+                              n->next[i] = curr[i];
+                          }
+
+                          sm.unlock();
+                          return true;
+                      }
+                  }
+
+                  bool Remove(int key) {
+                      SKNODE* pred[MAX_LEVEL + 1];
+                      SKNODE* curr[MAX_LEVEL + 1];
+
+                      sm.lock();
+
+                      Find(key, pred, curr);
+
+                      if (curr[0]->key == key) {
+                          auto n = curr[0];
+
+                          for (int i = 0; i <= curr[0]->top_level; ++i) {
+                              pred[i]->next[i] = curr[i]->next[i];
+                          }
+
+                          sm.unlock();
+                          delete n;
+                          return true;
+                      } else {
+                          sm.unlock();
+                          return false;
+                      }
+                  }
+
+                  bool Contains(int key) {
+                      SKNODE* pred[MAX_LEVEL + 1];
+                      SKNODE* curr[MAX_LEVEL + 1];
+
+                      sm.lock();
+
+                      Find(key, pred, curr);
+
+                      if (curr[0]->key == key) {
+                          sm.unlock();
+                          return true;
+                      } else {
+                          sm.unlock();
+                          return false;
+                      }
+                  }
+              };
+
+ ====================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================
+
+ ■ 게으른 스킵 리스트
+
+ 1. 게으른 스킵 리스트
+    → Non-Blocking 스킵 리스트의 전 단계
        Marked 필드 사용
 
     → 문제점 : 중간 단계의 증가
@@ -1087,7 +1208,7 @@
                       아래의 링크가 연결되지 않았다면 nullptr 참조 오류가 발생한다.
 
 
- 2. 구현
+ 2. 메소드
     → Add : 모든 링크가 연결되었는지 나타내는 Flag 필요
 
        Remove : prev[]와 curr[]를 완전히 Locking하고 Marking하는 것은 비효율적  // head, tail이 Locking되면 SkipList 전체가 멈춘다.
@@ -1096,7 +1217,6 @@
     → 노드
        → 개별적인 잠금 : std::recursive_mutex 사용
           Marked 필드 : Remove 시 논리적으로 제거하고 있는 중이라면 true
-          next[n] : 각 층에 해당하는 포인터의 배열
           fullylinked : 모든 층에서 추가된 노드에 제대로 참조를 설정할 때까지 논리적으로 SkipList에 없다고 판단
                         → false일 경우 접근이 허용되지 않으며 true가 될 때까지 스핀
 
@@ -1104,7 +1224,7 @@
        → 초기에는 head의 모든 층이 tail을 가리킨다.
 
 
- 3. 메소드
+ 3. 구현
     → Find : int Find(int key, NODE* prev[], NODE* curr[]) {
                   int found_level = -1;
 
@@ -1263,15 +1383,220 @@
                 }
 
        Contains : bool Contains(int key) {
-                    NODE* prev[MAX_LEVEL + 1];
-                    NODE* curr[MAX_LEVEL + 1];
+                      NODE* prev[MAX_LEVEL + 1];
+                      NODE* curr[MAX_LEVEL + 1];
 
-                    int found_level = Find(key, prev, curr);
+                      int found_level = Find(key, prev, curr);
 
-                    return (found_level != -1 &&
-                            curr[found_level]->fullylinked &&
-                            curr[found_level]->removed == false);
+                      return (found_level != -1 &&
+                              curr[found_level]->fullylinked &&
+                              curr[found_level]->removed == false);
                   }
+
+ ====================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================
+
+ ■ 무잠금 스킵 리스트
+
+ 1. 무잠금 스킵 리스트
+    → 삽입과 삭제를 위해 CAS 사용
+       → 논리적 제거는 노드의 모든 next에 마킹을 함으로써 수행된다.
+          물리적 제거는 Find() 메소드에서 마킹된 노드를 제거함으로써 수행된다.
+
+
+ 2. 메소드
+    → Find() : 리스트를 순회하며 마킹된 노드를 만나면 링크를 잘라낸다.
+                → 모든 층의 링크를 잘라내지는 않으므로 정확한 스킵리스트가 유지되지 않는다.
+                   하지만 검색의 정확성에는 문제가 없다.
+
+                대상 키를 갖는 노드가 레벨 0에 존재하고, 마킹이 되지 않았다면 true를 반환한다.
+
+       Add() : 새 노드를 레벨 0에 연결하여 논리적으로 추가한다.
+               순서대로 최상층까지 연결한다.
+
+       Remove() : 레벨 0을 제외한 레벨에 마킹을 함으로써 논리적으로 제거한다.
+                  최하층에 마킹을 한다.
+                  → 성공 : Find() 메소드를 통해 물리적으로 제거한다.
+                     실패 : 재시도가 필요하지 않으므로 false를 반환한다.
+
+
+ 3. 구현
+    → class SKAMR {
+       private: 
+           std::atomic_llong data;
+
+       public:
+           LFSKNODE* get_ptr() {
+               long long temp = data & 0xFFFFFFFFFFFFFFFE;
+               return reinterpret_cast<LFSKNODE*>(temp);
+           }
+
+	       LFSKNODE* get_ptr(bool* is_removed) {
+		       long long temp = data;
+		       *is_removed = (temp & 1) == 1;
+		       return reinterpret_cast<LFSKNODE*>(temp & 0xFFFFFFFFFFFFFFFE);
+	       }
+
+           void set_ptr(LFSKNODE* p) {
+               long long temp = reinterpret_cast<long long>(p);
+               temp = temp & 0xFFFFFFFFFFFFFFFE;
+               data = temp;
+           }
+
+           bool get_mark() {
+               return (data & 1) == 1;
+           }
+
+           bool CAS(LFSKNODE* old_p, LFSKNODE* new_p, bool old_m, bool new_m) {
+               long long old_value = reinterpret_cast<long long>(old_p);
+               long long new_value = reinterpret_cast<long long>(new_p);
+
+               if (true == old_m) {
+                   old_value = old_value | 1;
+               } else {
+                   old_value = old_value & 0xFFFFFFFFFFFFFFFE;
+               }
+
+               ...
+
+               return std::atomic_compare_exchange_strong(
+                   &data,
+                   &old_value,
+                   new_value);
+           }
+       }
+
+       class LFSKLIST {
+       private:
+           LFSKNODE* head;
+           LFSKNODE* tail;
+
+       public:
+           bool Find(int key, LFSKNODE* pred[], LFSKNODE* curr[]) {
+           retry:
+               for (int i = MAX_LEVEL, i >= 0; --i) {
+                   if (i == MAX_LEVEL) {
+                       pred[i] = head;
+                   } else {
+                       pred[i] = pred[i + 1];
+                   }
+
+                   curr[i] = pred[i]->next[i].get_ptr();
+
+                   while (true) {
+                       bool removed = false;
+                       LFSKNODE* succ = curr[i]->next[i].get_ptr(&removed);
+
+                       while (true == removed) {
+                           if (false == pred[i]->next[i].CAS(curr[i], succ, false, false)) {
+                               goto retry;
+                           }
+
+                           curr[i] = succ;
+                           succ = curr[i]->next[i].get_ptr(&removed);
+                       }
+
+                       if (curr[i]->key >= key) { break; }
+
+                       pred[i] = curr[i];
+                       curr[i] = succ;
+                   }
+               }
+
+               return curr[0]->key == key;
+           }
+
+           bool Add(int key) {
+               LFSKNODE* pred[MAX_LEVEL + 1];
+               LFSKNODE* curr[MAX_LEVEL + 1];
+
+               while (true) {
+                   if (true == Find(key, pred, curr) { return false; }
+
+                   int top_level = 0;
+
+                   for (int i = 0; i < MAX_LEVEL; ++i) {
+                       if (rande() % 2 == 0) { break; }
+                       ++top_level;
+                   }
+
+                   auto n = new LFSKNODE{ key, top_level };
+
+                   for (int i = 0; i <= top_level; ++i) {
+                       n->next[i].set_ptr(curr[i]);
+                   }
+
+                   if (false == pred[0]->next[0].CAS(curr[0], n, false, false)) { continue; }
+
+                   for (int i = 1; i <= top_level; ++i) {
+                       while (false == pred[i]->next[i].CAS(curr[i], n, false, false)) {
+                           Find(key, pred, curr);
+                       }
+                   }
+
+                   return true;
+               }
+           }
+
+           bool Remove(int key) {
+               LFSKNODE* pred[MAX_LEVEL + 1];
+               LFSKNODE* curr[MAX_LEVEL + 1];
+
+               if (false == Find(key, pred, curr)) { return false; }
+
+               LFSKNODE* victim = curr[0];
+               int top_level = victim->top_level;
+
+               LFSKNODE* succ;
+
+               for (int i = top_level; i > 0; --i) {
+                   succ = victim->next[i].get_ptr();
+
+                   while (false == victim->next[i].CAS(succ, succ, false, true) {
+                       if (true == victim->next[i].get_mark()) { break; }
+                       if (false == Find(key, pred, curr)) { return false; }
+                   }
+               }
+
+               succ = victim->next[0].get_ptr();
+
+               if (true == victim->next[0].CAS(succ, succ, false, true)) {
+                   Find(key, pred, curr);
+                   return true;
+               } else {
+                   return false;
+               }
+           }
+
+           bool Contains(int key) {
+               LFSKNODE* pred;
+               LFSKNODE* curr;
+
+               pred = head;
+               curr = pred->next[MAX_LEVEL].get_ptr();
+
+               for (int i = MAX_LEVEL; i >= 0; --i) {
+                   curr = pred->next[i].get_ptr();
+
+                   while (true) {
+                       bool removed = false;
+                       LFSKNODE* succ = curr->next[i].get_ptr(&removed);
+
+                       while (true == removed) {
+                           curr = succ;
+                           succ = curr->next[i].get_ptr(&removed);
+                       }
+
+                       if (curr->key == key) { break; }
+
+                       pred = curr;
+                       curr = succ;
+                   }
+               }
+
+               return curr->key == key;
+           }
+       }
+       → 메모리 재사용 : EBR을 사용하면 된다.
 
  ====================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================
 
