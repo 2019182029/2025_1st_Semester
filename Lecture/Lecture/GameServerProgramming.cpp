@@ -870,8 +870,11 @@
     → 소켓 API를 C++ API로 재작성 : 직관적이어서 사용하기 편하다.
                                      람다 함수에 매우 의존적이다.
                                      소켓 객체의 관리에 주의해야 한다.
-                                     → 소멸자가 호출되어야 커널 자료구조가 반환된다.
-                                        멀티쓰레드 사용 시 shared_ptr 사용이 강제된다.
+
+       운영체제 별로 최신 API를 사용하여 구현
+       → Linux : io_uring
+          Mac : kqueue
+          Windows : IOCP
 
     → 동작 : io_context와 socket 필요
               → boost::asio::io_context io_context;
@@ -893,6 +896,144 @@
 
               → 멀티쓰레드 연동 : io_context에 대한 모든 접근은 멀티쓰레드 safety를 보장한다.
                                    → 여러 개의 쓰레드에서 io_context::run()을 호출함으로써 병렬성을 얻을 수 있다.
+
+    → 주소는 endpoint로 관리한다.
+       → boost::asio::ip::tcp::endpoint server_addr(boost::asio::ip::address::from_string("127.0.0.1"), 3000);
+          boost::asio::ip::tcp::v4()가 소켓 API의 INADDR_ANY에 해당
+
+
+ 3. API
+    → 서버 : boost::asio::ip::tcp::accept가 소켓 API의 Listen Socket에 해당
+              → boost::asio::ip::tcp::accept acceptor(io_context, endpoint);
+
+    → 동기식 송수신
+       → size_t boost::asio::ip::tcp::socket::write(
+              const ConstBufferSequence& buffers, 
+              boost::system::error_code& ec
+          );
+          → write : 버퍼의 내용이 다 전송될 때까지 대기  // WSASend
+             read : 버퍼가 다 찰 때까지 대기
+
+          size_t boost::asio::ip::tcp::socket::write_some(
+              const ConstBufferSequence& buffers, 
+              boost::system::error_code& ec
+          );
+          → 버퍼가 다 전송되거나 차지 않아도 완료  // WSARecv, Linux의 recv와 send
+
+       비동기식 송수신
+       → void boost::asio::ip::tcp::socket::async_write(
+              AsyncWriteStream& s,
+              const ConstbufferSequence& buffers,
+              BOOST_ASIO_MOVE_ARG handler)
+          );
+
+          void boost::asio::ip::tcp::socket::async_write_some(
+              const ConstbufferSequence& buffers,
+              BOOST_ASIO_MOVE_ARG handler)
+          );
+          
+          void handler(
+              const boost::system::error_code& error,
+              size_t bytes_transferred
+          );
+          → buffers는 WSABUF와 마찬가지로 여러 개의 버퍼의 모임
+             handler가 필요로 하는 추가 정보는 람다 함수로 전달
+
+    → 그 외
+       → Worker Thread : boost::asio::post()
+          Timer Thread : boost::asio::steady_timer t(io_context, boost::chrono::seconds(1));
+                         t.async_wait(&func);
+
+
+ 4. 실습
+    → #include <SDKDDKVER.h>
+       #include <boost/asio.hpp>
+
+    → 클라이언트 : int main() {
+                        try {
+                            boost::asio::io_context io_context;
+                            boost::asio::ip::tcp::endpoint server_addr(boost::asio::ip::address::from_string("127.0.0.1"), 3500);
+                            boost::asio::ip::tcp::socket socket(io_context);
+
+                            boost::asio::connect(socket, &server_addr);
+
+                            for (;;) {
+                                std::string buf;
+                                boost::system::error_code error;
+
+                                std::getline(std::cin, buf);
+                                if (0 == buf.size()) break;
+
+                                socket.write_some(boost::asio::buffer(buf), error);
+                                if (error == boost::asio::error::eof) break;
+                                else if (error) throw boost::system::system_error(error);
+
+                                char reply[1024 + 1];
+                                size_t len = socket.read_some(boost::asio::buffer(reply, 1024), error);
+                                if (error == boost::asio::error::eof) break;
+                                else if (error) throw boost::system::system_error(error);
+                                reply[len] = 0;
+                            }
+                        } catch (std::exception& e) {
+                            std::cerr << e.what() << std::endl;
+                        }
+                    }
+
+    → 서버 : void accept_callback(boost::system::error_code ec, tcp::socket& socket, tcp::acceptor& my_acceptor) {
+                  g_clients.try_emplace(g_client_id, move(socket), g_client_id++);
+                  
+                  my_acceptor.async_accept(
+                      [&my_acceptor](boost::system::error_code ec, tcp::socket socket) {
+                          accept_callback(ec, socket, my_acceptor);
+                      }
+                  );
+              }
+
+              // SESSION
+              void do_read() {
+                  socket_.async_read_some( 
+                      boost::asio::buffer(data_, max_length), 
+                      [this](boost::system::error_code ec, size_t length) {
+                          if (ec) { g_clients.erase(my_id); }
+                          else { g_clients[my_id].do_write(length); }
+                      }
+                  );
+              }
+
+              void do_write(size_t length) {
+                  boost::asio::async_write(
+                      socket_, 
+                      boost::asio::buffer(data_, length), 
+                      [this](boost::system::error_code ec, size_t length) {
+                          if { (!ec) g_clients[my_id].do_read(); }
+                          else { g_clients.erase(my_id); }
+                      }
+                  );
+              }
+
+              int main(int argc, char* argv[]) {
+                  try {
+                      boost::asio::io_context io_context;
+                      tcp::acceptor my_acceptor{ io_context, tcp::endpoint(tcp::v4(), PORT) };
+                 
+                      my_acceptor.async_accept(
+                          [&my_acceptor](boost::system::error_code ec, tcp::socket socket) {
+                              accept_callback(ec, socket, my_acceptor); 
+                          }
+                      );
+                 
+                      io_context.run();
+                  } catch (std::exception& e) {
+                     std::cerr << "Exception: " << e.what() << "\n";
+                  }
+              }
+
+    → 문제점 : SESSION 소멸자 호출 시 socket 객체 또한 소멸자가 호출된다.
+                → atomic<shared_ptr<T>>를 사용해야 한다.
+
+                mutex 사용은 엄청난 병렬성 감소를 유발한다.
+                → array 또는 병렬 컨테이너를 사용해야 한다.
+                   → concurrency::concurrent_unordered_map<int, atomic<shared_ptr<SESSION>>> : 소켓 객체가 copyable하지 않으므로 atomic에서 오류 발생
 
  ====================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================
 
