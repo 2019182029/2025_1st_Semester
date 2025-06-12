@@ -1074,8 +1074,7 @@
 
 
  2. 순차 스킵 리스트
-    → Find() : head에서 시작
-                높은 레벨의 포인터부터 검색, 한 레벨의 검색이 끝나면 다음 레벨의 검색 시작
+    → Find() : 높은 레벨의 포인터부터 검색, 한 레벨의 검색이 끝나면 다음 레벨의 검색 시작
                 → 레벨 별 검색 결과 pred[], curr[]에 저장
                    맨 아래 레벨에 도달할 경우 종료
 
@@ -1201,7 +1200,7 @@
                    → Add : 중간 단계의 노드는 아직 Add되지 않은 노드
                       Remove : Marking 되었으면 Remove된 노드
                    
-                → 해결책 : 중간 단계의 노드가 발견되면 완전히 처리될 때까지 기다린 뒤 리턴
+                → 해결책 : 중간 단계의 노드가 발견되면 완전히 처리될 때까지 기다린다.
                             Add : 아래에서부터 위로 링크 연결
                             Remove : 아래에서부터 위로 Locking하고, 위에서부터 아래로 링크 제거
                             → 위의 링크가 연결되지 않아도 pred, curr에 잘못된 값이 들어갈 수 있을 뿐, 검색에는 문제 없다.
@@ -1212,11 +1211,7 @@
     → 노드
        → 개별적인 잠금 : std::recursive_mutex 사용
           Marked 필드 : Remove 시 논리적으로 제거하고 있는 중이라면 true
-          fullylinked : 모든 층에서 추가된 노드에 제대로 참조를 설정할 때까지 논리적으로 SkipList에 없다고 판단
-                        → false일 경우 접근이 허용되지 않으며 true가 될 때까지 스핀
-
-       보초 노드
-       → 초기에는 head의 모든 층이 tail을 가리킨다.
+          fullylinked : 모든 층에서 추가된 노드에 제대로 참조를 설정할 때까지 논리적으로 스킵 리스트에 없다고 판단
 
 
  3. 구현
@@ -1263,10 +1258,7 @@
                      bool valid = false;
 
                      for (int i = 0; i < MAX_LEVEL; ++i) {
-                         if (rand() % 2 == 0) {
-                             break;
-                         }
-
+                         if (rand() % 2 == 0) { break; }
                          ++top_level;
                      }
 
@@ -1281,14 +1273,11 @@
                              for (int i = 0; i <= level; ++i) {
                                  pred[i]->nl.unlock();
                              }
-                             
                              break;
                          }
                      }
 
-                     if (valid == false) {                                  // Invalid할 경우
-                         continue;                                          // 처음부터 다시 시작
-                     }
+                     if (valid == false) { continue; }                      // Invalid할 경우 처음부터 다시 시작
 
                      NODE* n = new NODE(key, top_level);
 
@@ -1307,8 +1296,7 @@
                  }
              }
 
-       Remove : prev[]와 curr[]를 완전히 Locking하고 Marking하는 것은 비효율적  // head, tail이 Locking되면 SkipList 전체가 멈춘다.
-                Marking 후 위의 링크에서 Invalidate 발생 시 Find를 다시 수행할 필요 有
+       Remove : prev[]와 curr[]를 완전히 Locking하고 Marking하는 것은 비효율적  // head, tail이 Locking되면 스킵 리스트 전체가 멈춘다.
                 → bool Remove(int key) {
                        NODE* prev[MAX_LEVEL + 1];
                        NODE* curr[MAX_LEVEL + 1];
@@ -1320,9 +1308,7 @@
                        while (true) {
                            int found_level = Find(key, prev, curr);
 
-                           if (found_level != -1) {
-                               victim = curr[found_level];
-                           }
+                           if (found_level != -1) { victim = curr[found_level]; }
 
                            if (is_marked ||                                            // Marking을 했거나 제거 조건이 만족되면 제거 시도
                                (found_level != -1 && 
@@ -1334,7 +1320,7 @@
 					               victim->nl.lock();
 
                                    if (victim->removed) {                              // 다른 스레드에서 먼저 Marking했다면
-	      					            victim->nl.unlock();    
+	      					           victim->nl.unlock();    
                                        return false;                                   // false 리턴
                                    }
 
@@ -1342,12 +1328,12 @@
                                    is_marked = true;
                                }
 
-		      		            bool valid = true;
+		      		           bool valid = true;
 
-                               for (int level = 0; level <= top_level; ++level) {
+                               for (int level = 0; level <= top_level; ++level) {      // 0레벨부터 Valid 검사하며 Locking
 					               pred[level]->nl.lock();
 
-                                   if ((pred[level]->removed == true) ||               // 0레벨부터 Valid 검사하며 Locking
+                                   if ((pred[level]->removed == true) ||               
 						               (pred[level]->next[level] != victim)) {  
 						               valid = false;
 
@@ -1358,11 +1344,9 @@
                                    }
 				               }
 
-				               if (valid == false) {                                   // Invalid할 경우
-					               continue;                                           // 처음부터 다시 시작
-				               }
+                               if (valid == false) { continue; }                       // Invalid할 경우 처음부터 다시 시작
 
-                               for (int level = top_level; level >= 0; --level) {      // top_level부터 SkipList에서 제거한다.
+                               for (int level = top_level; level >= 0; --level) {      // top_level부터 스킵 리스트에서 제거한다.
 					               pred[level]->next[level] = victim->next[level]; 
 				               }
 
@@ -1395,8 +1379,8 @@
  ■ 무잠금 스킵 리스트
 
  1. 무잠금 스킵 리스트
-    → 삽입과 삭제를 위해 CAS 사용
-       → 논리적 제거는 노드의 모든 next에 마킹을 함으로써 수행된다.
+    → CAS를 사용한 삽입과 삭제
+       → 논리적 제거는 제거할 노드의 마킹을 함으로써 수행된다.
           물리적 제거는 Find() 메소드에서 마킹된 노드를 제거함으로써 수행된다.
 
 
@@ -1464,8 +1448,7 @@
 
        class LFSKLIST {
        private:
-           LFSKNODE* head;
-           LFSKNODE* tail;
+           ...
 
        public:
            bool Find(int key, LFSKNODE* pred[], LFSKNODE* curr[]) {
@@ -1522,7 +1505,10 @@
                        n->next[i].set_ptr(curr[i]);
                    }
 
-                   if (false == pred[0]->next[0].CAS(curr[0], n, false, false)) { continue; }
+                   if (false == pred[0]->next[0].CAS(curr[0], n, false, false)) { 
+                       delete n;
+                       continue; 
+                   }
 
                    for (int i = 1; i <= top_level; ++i) {
                        while (false == pred[i]->next[i].CAS(curr[i], n, false, false)) {
@@ -1545,7 +1531,7 @@
 
                LFSKNODE* succ;
 
-               for (int i = top_level; i > 0; --i) {
+               for (int i = 1; i <= top_level; ++i) {
                    succ = victim->next[i].get_ptr();
 
                    while (false == victim->next[i].CAS(succ, succ, false, true) {
@@ -1556,11 +1542,17 @@
 
                succ = victim->next[0].get_ptr();
 
-               if (true == victim->next[0].CAS(succ, succ, false, true)) {
-                   Find(key, pred, curr);
-                   return true;
-               } else {
-                   return false;
+               while (true) {
+                   if (true == victim->next[0].CAS(succ, succ, false, true)) {
+                       Find(key, pred, curr);
+                       return true;
+                   } else {
+                       bool removed = false;
+                       succ = victim->next[0].get_ptr(&removed
+                       if (removed) {
+                           return false;
+                       }
+                   }
                }
            }
 
@@ -1593,13 +1585,44 @@
                return curr->key == key;
            }
        }
-       → 메모리 재사용 : EBR을 사용하면 된다.
+       → 메모리 재사용 : EBR 사용
 
  ====================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================
 
  ■ TBB
 
+ 1. OpenMP
+    → private : 코어마다 다른 값, shared : 코어들이 같은 값  // 다음 장 스킵 -> parallel로...
 
+    → data race 있으니까 lock...  // do/for로 넘어감
+
+    → for루프 parallel 가능!
+       → pragma omp for  // 주의 사항으로 넘어감
+
+    → section // 나머지 넘어감
+
+    메모리 일관성 : fence 등
+
+
+ 2. TBB
+    메모리 일관성 : 걍 C++11 쓰는 게 낫다.
+
+    hash_map은 accesor 쓰니까 당연히 오버헤드 존재
+
+
+ 4. 하스켈
+    → 병렬화 : 걍 p : p, p에서 뒤쪽 p를 멀티쓰레드로 하면 됨.
+                → 인자를 따로 받고, 나는 리턴값만 계산하니까 Data Race X
+                   → TBB처럼 무지성하면 성능 떨어짐
+                      → 그래서 'par'씀. 이 뒤쪽은 멀티로 실행된다.
+
+    → 함수형 : 멀티쓰레드 문제없게 언어를 뜯어고친다.
+       → OR 너무 어려우니까 Channel 등을 지원하자
+
+ 5. -std=c++11 -pthread 이거 넣어야 C++, 멀티쓰레드로 돌아감  // 지금은 default
+    예제의 rand()가 블로킹이라 Linux에서는 느리다.
+
+    ARM은 weak로 ABA 막을 수 있다.
 
 */
 
