@@ -131,6 +131,7 @@
     <ClCompile Include="GameServerProgramming.cpp" />
     <ClCompile Include="MultithreadProgramming.cpp" />
     <ClCompile Include="생활한자.cpp" />
+    <ClCompile Include="현대중국의이해.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

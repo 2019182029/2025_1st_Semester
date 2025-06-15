@@ -553,10 +553,7 @@
 
 
     → 이론
-       → 32bit : ST_Ptr는 64bit 자료구조이므로, 캐시 경계선에 놓일 수 있다.
-                  → std::atomic_llong으로 선언
-
-          64bit : ST_Ptr는 128bit 자료구조이므로, 128bit CAS 필요
+       → 64bit : ST_Ptr는 128bit 자료구조이므로, 128bit CAS 필요
                   → BOOLEAN InterlockedCompareExchange128(
                          LONG64 volatile* Dest,
                          LONG64           ExchangeHigh,
@@ -774,12 +771,10 @@
                           }
 
     → 구현 : class LF_BO_STACK {
-              private:
-                  ...
-
               public:
                   void Push(int x) {
                       Node* n = new Node{ x };
+
                       bool first_time = true;
 
                       while (true) {
@@ -857,18 +852,18 @@
                                   int old_range = range;
 
                                   if (RET_BUSY_TIMEOUT == ret) {
-                                      if (old_range > 1) {
-                                           std::atomic_compare_exchange_strong(
-                                               reinterpret_cast<std::atomic_int*>(&range),
-                                               &old_range,
-                                               old_range - 1);
-                                      }
-                                  } else if (RET_TIMEOUT == ret) {
-                                        if (old_range < MAX_EXCHANGER - 1) {
+                                      if (old_range < MAX_EXCHANGER - 1) {
                                            std::atomic_compare_exchange_strong(
                                                reinterpret_cast<std::atomic_int*>(&range),
                                                &old_range,
                                                old_range + 1);
+                                      }
+                                  } else if (RET_TIMEOUT == ret) {
+                                      if (old_range > 1) {
+                                          std::atomic_compare_exchange_strong(
+                                              reinterpret_cast<std::atomic_int*>(&range),
+                                              &old_range,
+                                              old_range - 1);
                                   }
 
                                   return ret;
@@ -974,9 +969,6 @@
                       }
 
     → EliminationBackoffStack : class LF_BO_STACK {
-                                 private:
-                                     ...
-
                                  public:
                                      void Push(int x) {
                                          Node* n = new Node{ x };
@@ -1596,42 +1588,36 @@
                                이미 생성되어 있는 Worker Thread가 블록을 실행한다.
                                블록의 끝에서 모든 쓰레드의 종료를 확인한 후 진행한다.
 
-    → 작업 : 병렬성을 지정하는 프로그램 단위
-              → 작업 분배 지정
-                 → Do/For : 루프를 여러 쓰레드가 나누어 수행  
-                    SECTIONS : 프로그램 블록으로 나누어진 작업을 여러 쓰레드가 나누어 수행
-                    SINGLE : 한 개의 쓰레드가 전담하여 수행
+    → 작업 분배
+       → Do/For : 루프를 여러 쓰레드가 나누어 수행  
+          SECTIONS : 블록으로 나누어진 작업을 여러 쓰레드가 나누어 수행
+          SINGLE : 한 개의 쓰레드가 전담하여 수행
 
 
  2. TBB
     → Loop Parallelizer : 사용자가 문제를 멀티쓰레드 적용 가능한 형태로 변환해야 한다.  
                            → 루프 본체를 함수로 변환한다.
-                              TBB용 클래스로 변환한다.
+                              함수를 TBB용 클래스로 변환한다.
                               TBB Parallelizer를 호출한다.
                               → parallel_for(range<int>(0, x), function());
 
                            → 람다를 사용하여 간단하게 변환할 수 있다.
-                              → parallel_for(first, last, step, function);
-                                 → 예제 : parallel_for(0, n, [&](int i) { sum += 2; });
+                              → parallel_for(0, n, [&](int i) { sum += 2; });
 
-    → Container : 멀티쓰레드 환경에서 사용할 수 있는 여러 컨테이너를 제공한다.
-                   Lock-Free 혹은 Fine-Grained Synchronization으로 구현되어 고성능이다.
-                   → concurrent_unordered_map : insert(), find(), count(), size(), at()이 Thread Safe하다.
-                                                 erase()가 Thread Safe하지 않다.
+    → Container : Lock-Free 혹은 Fine-Grained Synchronization으로 구현되어 고성능이다.
+                   → concurrent_unordered_map : erase()가 Thread Safe하지 않다.
                                                  → 데이터를 넣었다 뺐다 하는 용도로 사용할 수 없다.
 
-                      concurrent_hash_map : find(), insert(), remove()가 Thread Safe하다.
+                      concurrent_hash_map : remove()가 Thread Safe하다.
                                             → 모든 자료의 접근은 accessor라는 스마트 포인터를 통해 이뤄진다.
                                                읽기만 하고 수정하지 않는 경우 const_accessor를 사용하는 것이 좋다.
 
-                      concurrent_vector : push_back(), grow_by(), grow_to_at_least(), size()가 Thread Safe하다.
-                                          clear(), swap(), resize(), reserve()가 Thread Safe하지 않다.
+                      concurrent_vector : clear(), swap(), resize(), reserve()가 Thread Safe하지 않다.
                                           shrink가 불가능하다.
                                           원소가 연속된 주소에 있지 않아 일반적인 포인터 연산이 불가능하다.
                                           원소를 읽을 때 원소가 생성 중일 수 있으므로 읽기 전 생성 완료를 확인해야 한다.
 
-                      concurrent_queue : push(), try_pop()이 Thread Safe하다.
-                                         unsafe_size(), empty(), clear(), swap()이 Thread Safe하지 않다.
+                      concurrent_queue : unsafe_size(), empty(), clear(), swap()이 Thread Safe하지 않다.
                                          → empty() 호출이 pop()의 성공을 보장하지 않으므로 try_pop()을 제공한다.
 
     → Mutual Exclusion : scoped_lock, 선언된 블록을 빠져 나올 때 자동으로 unlock을 한다.
@@ -1648,7 +1634,7 @@
                                          → recursive 알고리즘에서 편리
 
                              Long Wait : 오래 기다리고 있을 경우
-                                         → yield : 같은 프로세스의 다른 쓰레드 실행
+                                         → yield : 다른 쓰레드 실행
                                             block : 깨워줄 때까지 멈춤
 
                              RW : 공유 메모리를 여러 쓰레드에서 동시에 읽는 것이 문제가 되지 않을 경우 사용
@@ -1682,14 +1668,14 @@
 
 
  3. CUDA
-    → 대규모 병렬 처리를 GPU에서 수행하는 GPGPU의 일종
+    → 병렬 처리를 GPU에서 수행하는 GPGPU의 일종
        
     → 장점 : 계산량이 많을 경우 CPU의 몇 십 배의 속도
     
        단점 : Nvidia 하드웨어만 지원한다.
               → DirectCompute, OpenCL을 사용하여 해결
 
-              낮은 I/O 및 직렬 계산 속도  
+              낮은 직렬 계산 및 I/O 속도  
               → CPU와 GPU 사이의 병목 현상
 
               적은 메모리
