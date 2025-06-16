@@ -1131,6 +1131,7 @@
                           }
 
                           sm.unlock();
+
                           delete n;
                           return true;
                       } else {
@@ -1223,7 +1224,7 @@
                      int found_level = Find(key, prev, curr);
 
                      if (-1 != found_level) {                               // 존재할 경우
-                         while (curr[found_level]->fullylinked == false);   // fullylinked == true일 때까지 기다린 후
+                         while (curr[0]->fullylinked == false);             // fullylinked == true일 때까지 기다린 후
                          return false;                                      // false 리턴
                      }
 
@@ -1281,7 +1282,7 @@
                        while (true) {
                            int found_level = Find(key, prev, curr);
 
-                           if (found_level != -1) { victim = curr[found_level]; }
+                           if (found_level != -1) { victim = curr[0]; }
 
                            if (is_marked ||                                            // Marking을 했거나 제거 조건이 만족되면 제거 시도
                                (found_level != -1 && 
@@ -1323,7 +1324,7 @@
 					               pred[level]->next[level] = victim->next[level]; 
 				               }
 
-                               victim->nl.unlock();
+                               delete victim;
 
 				               for (int level = 0; level <= top_level; ++level) {
 					               pred[level]->nl.unlock();
@@ -1420,9 +1421,6 @@
        }
 
        class LFSKLIST {
-       private:
-           ...
-
        public:
            bool Find(int key, LFSKNODE* pred[], LFSKNODE* curr[]) {
            retry:
@@ -1521,7 +1519,9 @@
                        return true;
                    } else {
                        bool removed = false;
-                       succ = victim->next[0].get_ptr(&removed
+
+                       succ = victim->next[0].get_ptr(&removed);
+
                        if (removed) {
                            return false;
                        }
@@ -1534,7 +1534,6 @@
                LFSKNODE* curr;
 
                pred = head;
-               curr = pred->next[MAX_LEVEL].get_ptr();
 
                for (int i = MAX_LEVEL; i >= 0; --i) {
                    curr = pred->next[i].get_ptr();
